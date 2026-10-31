@@ -62,6 +62,24 @@ class BuildTracker(
         }
     }
 
+    /**
+     * Called once when the app starts: follows again every real build that was still unfinished when the app was
+     * closed. Builds whose checking was deliberately stopped (timeout, expired sign-in) are left for the user to refresh.
+     */
+    fun resumeUnfinished() {
+        scope.launch {
+            try {
+                builds.getBuildHistory()
+                    .filter { !it.isSample && !it.status.isTerminal && !it.pollingStopped }
+                    .forEach { track(it.id) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Opening a build screen resumes tracking anyway.
+            }
+        }
+    }
+
     private suspend fun markStopped(buildId: String) {
         try {
             val record = builds.getBuild(buildId) ?: return
