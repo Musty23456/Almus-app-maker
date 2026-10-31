@@ -171,6 +171,9 @@ fun CodeEditorSurface(
     val horizontalScroll = rememberScrollState()
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        // Read the limits here: inside Row/Box below the DSL marker forbids implicit access to them.
+        val viewportMaxWidth = maxWidth
+        val viewportMaxHeight = maxHeight
         val viewportHeightPx = constraints.maxHeight
         val fieldViewportWidthPx = with(density) { (maxWidth - gutterWidth).coerceAtLeast(0.dp).toPx() }
         val startPaddingPx = with(density) { 8.dp.toPx() }
@@ -199,7 +202,7 @@ fun CodeEditorSurface(
                 style = textStyle.copy(color = scheme.outline, textAlign = TextAlign.End),
                 modifier = Modifier
                     .width(gutterWidth)
-                    .heightIn(min = maxHeight)
+                    .heightIn(min = viewportMaxHeight)
                     .background(scheme.surfaceVariant.copy(alpha = 0.35f))
                     .padding(end = 8.dp),
             )
@@ -222,8 +225,8 @@ fun CodeEditorSurface(
                     modifier = Modifier
                         .padding(start = 8.dp, end = 64.dp)
                         .defaultMinSize(
-                            minWidth = (maxWidth - gutterWidth - 72.dp).coerceAtLeast(0.dp),
-                            minHeight = maxHeight,
+                            minWidth = (viewportMaxWidth - gutterWidth - 72.dp).coerceAtLeast(0.dp),
+                            minHeight = viewportMaxHeight,
                         )
                         .onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown && event.key == Key.Tab) {
