@@ -1,0 +1,143 @@
+# almus-cloud-build-workflow-version: 1
+#
+# Almus App Creator Pro - cloud build workflow for YOUR projects.
+# Add this file to the repository you build in, at .github/workflows/almus-cloud-build.yml
+# (on the default branch, and on any other branch you build from).
+#
+# Security design (read this before changing anything):
+#  * It runs only when started by hand (workflow_dispatch) by someone with write access to the repository.
+#  * The job has the smallest possible permissions: it can only READ the repository contents.
+#  * It uses NO secrets. The GitHub token that the Almus app holds lives only on your phone; it is never
+#    sent to this workflow, so a Gradle build script cannot read it.
+#  * Checkout does not keep the workflow token on disk (persist-credentials: false).
+#  * The Gradle cache is disabled so a build script cannot poison a cache that later builds would trust.
+#  * Every input is validated before use and reaches shell commands only through environment variables.
+
+name: Almus Cloud Build
+run-name: "Almus cloud build ${{ inputs.build_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_dir:
+        description: "Folder in this repository that contains the Android project (settings.gradle.kts)"
+        required: true
+        type: string
+      build_id:
+        description: "Unique id created by the Almus app so it can find this run"
+        required: true
+        type: string
+      gradle_version:
+        description: "Gradle version to install"
+        required: false
+        default: "8.9"
+        type: string
+      gradle_task:
+        description: "Gradle task (only assembleDebug is allowed)"
+        required: false
+        default: "assembleDebug"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: almus-cloud-build-${{ inputs.build_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Validate inputs
+        env:
+          PROJECT_DIR: ${{ inputs.project_dir }}
+          BUILD_ID: ${{ inputs.build_id }}
+          GRADLE_VERSION: ${{ inputs.gradle_version }}
+          GRADLE_TASK: ${{ inputs.gradle_task }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [[ "$BUILD_ID" =~ ^[a-f0-9]{8,32}$ ]] || fail "build_id must be 8-32 lowercase hex characters."
+          [[ "$GRADLE_VERSION" =~ ^[0-9]{1,2}\.[0-9]{1,2}(\.[0-9]{1,2})?$ ]] || fail "gradle_version must look like 8.9 or 8.10.2."
+          [[ "$GRADLE_TASK" == "assembleDebug" ]] || fail "Only the assembleDebug task is allowed."
+          [[ "$PROJECT_DIR" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || fail "project_dir contains characters that are not allowed."
+          [[ "$PROJECT_DIR" != *..* ]] || fail "project_dir must not contain '..'."
+          [[ "$PROJECT_DIR" != .github* ]] || fail "project_dir must not be inside .github."
+
+      - name: Check out only the project folder
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: ${{ inputs.project_dir }}
+          persist-credentials: false
+
+      - name: Check project files
+        env:
+          PROJECT_DIR: ${{ inputs.project_dir }}
+        run: |
+          set -euo pipefail
+          if [ ! -d "$PROJECT_DIR" ]; then
+            echo "::error::Folder '$PROJECT_DIR' does not exist on this branch. Was the upload committed to the branch you dispatched?"
+            exit 1
+          fi
+          if [ ! -f "$PROJECT_DIR/settings.gradle.kts" ] && [ ! -f "$PROJECT_DIR/settings.gradle" ]; then
+            echo "::error::No settings.gradle(.kts) in '$PROJECT_DIR'."
+            exit 1
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;34.0.0"
+
+      # cache-disabled: build scripts are not trusted, so nothing they produce may be reused by later builds.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ inputs.gradle_version }}
+          cache-disabled: true
+
+      - name: Build debug APK
+        working-directory: ${{ inputs.project_dir }}
+        env:
+          GRADLE_TASK: ${{ inputs.gradle_task }}
+        run: |
+          set -o pipefail
+          gradle --no-daemon --stacktrace "$GRADLE_TASK" 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Verify APK exists
+        working-directory: ${{ inputs.project_dir }}
+        run: |
+          set -euo pipefail
+          APKS=$(find . -path '*/build/outputs/apk/debug/*.apk' -type f)
+          if [ -z "$APKS" ]; then
+            echo "::error::The build finished but no debug APK was produced."
+            exit 1
+          fi
+          echo "$APKS" | while read -r f; do ls -lh "$f"; done
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: almus-apk-${{ inputs.build_id }}
+          path: ${{ inputs.project_dir }}/**/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: almus-build-log-${{ inputs.build_id }}
+          path: ${{ runner.temp }}/build.log
+          if-no-files-found: ignore
+          retention-days: 7
