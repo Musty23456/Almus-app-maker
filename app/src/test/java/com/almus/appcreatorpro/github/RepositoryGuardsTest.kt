@@ -26,16 +26,86 @@ class RepositoryGuardsTest {
         assertTrue(CloudBuildConfig.WORKFLOW_PATH.endsWith(file.name))
     }
 
+    private fun jobText(text: String, job: String): String {
+        val start = text.indexOf("\n  $job:")
+        require(start >= 0) { "job $job not found" }
+        val next = Regex("\\n  [a-z]+:\\n").find(text, start + 1)
+        return if (next == null) text.substring(start) else text.substring(start, next.range.first)
+    }
+
     @Test
-    fun cloud_build_workflow_is_least_privilege_and_secret_free() {
+    fun cloud_build_workflow_is_least_privilege() {
         val text = (workflow ?: return).readText()
         assertTrue(text.contains("permissions:\n  contents: read"))
-        assertFalse("must not use secrets", Regex("\\$\\{\\{\\s*secrets\\.").containsMatchIn(text))
         assertFalse(text.contains("pull_request_target"))
         assertFalse("no write permissions", Regex("^\\s+[a-z-]+:\\s*write\\s*$", RegexOption.MULTILINE).containsMatchIn(text))
         assertTrue(text.contains("persist-credentials: false"))
         assertTrue(text.contains("cache-disabled: true"))
         assertTrue("manual trigger only", text.contains("workflow_dispatch:") && !text.contains("\n  push:") && !text.contains("\n  pull_request:"))
+    }
+
+    @Test
+    fun the_job_that_runs_project_code_has_no_access_to_any_secret() {
+        val text = (workflow ?: return).readText()
+        val build = jobText(text, "build")
+        assertFalse("the build job must not read secrets", build.contains("secrets."))
+        assertTrue("the build job runs the project's gradle", build.contains("gradle --no-daemon"))
+    }
+
+    @Test
+    fun signing_secrets_exist_only_in_the_sign_job_and_only_in_environment_variables() {
+        val text = (workflow ?: return).readText()
+        val sign = jobText(text, "sign")
+        val names = Regex("secrets\\.([A-Za-z0-9_]+)").findAll(text).map { it.groupValues[1] }.toSet()
+        assertEquals(com.almus.appcreatorpro.domain.build.SigningSecretNames.ALL.toSet(), names)
+        assertTrue(Regex("secrets\\.").findAll(text).count() == Regex("secrets\\.").findAll(sign).count())
+        assertTrue("secrets must not appear inside run: scripts", runBlockLinesWith(text, "secrets.").isEmpty())
+        assertFalse("the sign job must not run project code", sign.contains("gradle ") || sign.contains("actions/checkout"))
+        assertFalse("the sign job must not use the gradle setup action", sign.contains("setup-gradle"))
+        assertTrue("the key must be removed from the runner", sign.contains("rm -f \"\$RUNNER_TEMP/almus-release.p12\""))
+        assertTrue(sign.contains("trap 'rm -f \"\$KS\"' EXIT"))
+        assertTrue("the debug key must be rejected", sign.contains("Android Debug"))
+        assertFalse("a password must never be echoed", Regex("echo[^\\n]*(STORE_PASS|KEY_PASS|KEYSTORE_B64)").containsMatchIn(text))
+        assertFalse("a password must not be passed on a command line", Regex("-(storepass|keypass|pass)\\s+\"?\\$").containsMatchIn(sign))
+    }
+
+    @Test
+    fun the_hand_over_between_the_jobs_is_short_lived_and_the_final_artifacts_use_the_names_the_app_looks_for() {
+        val text = (workflow ?: return).readText()
+        val unsigned = com.almus.appcreatorpro.domain.build.ArtifactNaming.UNSIGNED_PREFIX
+        val i = text.indexOf("name: " + unsigned)
+        assertTrue(i > 0)
+        assertTrue(text.substring(i, i + 400).contains("retention-days: 1"))
+        assertTrue(text.contains("name: " + com.almus.appcreatorpro.domain.build.ArtifactNaming.AAB_PREFIX + "\${{ inputs.build_id }}"))
+        assertTrue(text.contains("*.aab"))
+        assertTrue(text.contains("name: " + com.almus.appcreatorpro.domain.build.ArtifactNaming.LOG_PREFIX))
+    }
+
+    @Test
+    fun the_workflow_accepts_exactly_the_gradle_tasks_the_app_can_send() {
+        val text = (workflow ?: return).readText()
+        val allowed = Regex("\\^\\(assembleDebug\\|[^)]*\\)\\$").find(text)?.value.orEmpty()
+        for (task in com.almus.appcreatorpro.domain.build.BuildVariant.ALLOWED_TASKS) assertTrue(task, allowed.contains(task))
+        assertEquals(4, com.almus.appcreatorpro.domain.build.BuildVariant.ALLOWED_TASKS.size)
+    }
+
+    @Test
+    fun every_input_the_app_sends_is_declared_by_the_workflow() {
+        val text = (workflow ?: return).readText()
+        val config = com.almus.appcreatorpro.domain.build.BuildConfiguration.DEFAULT
+        val sent = com.almus.appcreatorpro.domain.build.WorkflowInputs.build("d", "abc123def456", "8.9", config, CloudBuildConfig.WORKFLOW_VERSION).keys
+        for (key in sent) assertTrue("input $key is not declared", text.contains("\n      $key:\n"))
+        val declared = Regex("\n      ([a-z_]+):\n        description:").findAll(text).map { it.groupValues[1] }.toSet()
+        assertEquals(sent, declared)
+    }
+
+    @Test
+    fun the_override_script_contains_no_secret_names() {
+        val text = (workflow ?: return).readText()
+        val script = text.substringAfter("<<'ALMUS_INIT'").substringBefore("ALMUS_INIT\n")
+        assertTrue(script.contains("almusEnv"))
+        assertFalse(script.contains("ALMUS_SIGN", ignoreCase = true))
+        assertFalse(script.contains("password", ignoreCase = true))
     }
 
     @Test

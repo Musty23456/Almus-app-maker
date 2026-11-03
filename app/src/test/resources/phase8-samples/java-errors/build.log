@@ -1,0 +1,19 @@
+app/src/main/java/com/example/broken/Greeter.java:7: error: cannot find symbol
+        String message = "Hello " + nam;
+                                    ^
+  symbol:   variable nam
+  location: class Greeter
+app/src/main/java/com/example/broken/Greeter.java:12: error: incompatible types: String cannot be converted to int
+        int n = text;
+                ^
+app/src/main/java/com/example/broken/Greeter.java:17: error: cannot find symbol
+        Strin value = "x";
+        ^
+  symbol:   class Strin
+  location: class Greeter
+app/src/main/java/com/example/broken/Greeter.java:18: error: cannot find symbol
+        List<String> items = new ArrayList<>();
+                                 ^
+  symbol:   class ArrayList
+  location: class Greeter
+4 errors

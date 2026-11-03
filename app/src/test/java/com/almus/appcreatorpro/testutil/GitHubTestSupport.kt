@@ -113,11 +113,16 @@ class FakeGitHubApi : GitHubApi {
     val findAnswers = ArrayDeque<Any?>()
     /** Answers for getRun: WorkflowRun or GitHubException; last one repeats. */
     val runAnswers = ArrayDeque<Any>()
+    /** Phase 7: answers for getRun of one specific run id (several builds at once). Falls back to [runAnswers]. */
+    val runAnswersById = mutableMapOf<Long, ArrayDeque<Any>>()
+    /** Phase 7: the run id of every getRun call, in order. */
+    val getRunRequests = mutableListOf<Long>()
     var artifacts: List<WorkflowArtifact> = listOf(WorkflowArtifact(1, "almus-apk-abc", 1000, false))
     var artifactsError: GitHubException? = null
     var jobs: List<WorkflowJob> = emptyList()
     var logTail: String = ""
     var logError: GitHubException? = null
+    var cancelError: GitHubException? = null
 
     fun installWorkflow(ref: String, text: String = "${CloudBuildConfig.WORKFLOW_MARKER}\nname: x") {
         files["${CloudBuildConfig.WORKFLOW_PATH}@$ref"] = text
@@ -190,7 +195,8 @@ class FakeGitHubApi : GitHubApi {
 
     override suspend fun getRun(owner: String, name: String, runId: Long): WorkflowRun {
         calls += "getRun"
-        val answer = next(runAnswers)
+        getRunRequests += runId
+        val answer = next(runAnswersById[runId] ?: runAnswers)
         if (answer is GitHubException) throw answer
         return answer as WorkflowRun
     }
@@ -201,6 +207,10 @@ class FakeGitHubApi : GitHubApi {
 
     override suspend fun listJobs(owner: String, name: String, runId: Long): List<WorkflowJob> {
         calls += "listJobs"; return jobs
+    }
+
+    override suspend fun cancelRun(owner: String, name: String, runId: Long) {
+        calls += "cancelRun"; cancelError?.let { throw it }
     }
 
     override suspend fun getJobLogTail(owner: String, name: String, jobId: Long, maxChars: Int): String {

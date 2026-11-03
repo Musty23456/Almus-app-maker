@@ -1,0 +1,18 @@
+app/src/main/java/com/example/broken/Calculator.kt:9:26: error: initializer type mismatch: expected 'kotlin.Int', actual 'kotlin.String'.
+        val label: Int = "number"
+                         ^^^^^^^^
+app/src/main/java/com/example/broken/Calculator.kt:10:16: error: unresolved reference 'labl'.
+        return labl + value
+               ^^^^
+app/src/main/java/com/example/broken/Calculator.kt:15:9: error: 'val' cannot be reassigned.
+        result = items.sum()
+        ^^^^^^
+app/src/main/java/com/example/broken/Calculator.kt:20:21: error: only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'kotlin.collections.List<kotlin.String>?'.
+        return items.size
+                    ^
+app/src/main/java/com/example/broken/Calculator.kt:24:20: error: no value passed for parameter 'b'.
+        return add(1)
+                   ^^
+app/src/main/java/com/example/broken/Util.kt:5:30: error: unresolved reference 'undefinedHelper'.
+    return "Hello " + name + undefinedHelper(name)
+                             ^^^^^^^^^^^^^^^
