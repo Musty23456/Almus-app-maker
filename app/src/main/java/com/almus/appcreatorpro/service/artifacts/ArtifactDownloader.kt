@@ -277,9 +277,9 @@ class ArtifactDownloader(
         try {
             result = zip.use { z ->
                 val entries = z.entries().asSequence()
-                    .filter { !it.isDirectory && it.name.endsWith(".apk", ignoreCase = true) }
+                    .filter { !it.isDirectory && (it.name.endsWith(".apk", ignoreCase = true) || it.name.endsWith(".aab", ignoreCase = true)) }
                     .toList()
-                if (entries.isEmpty()) throw ArtifactDownloadException(Kind.NO_APK, "This artifact does not contain an APK file.")
+                if (entries.isEmpty()) throw ArtifactDownloadException(Kind.NO_APK, "This artifact does not contain an APK or AAB file.")
                 if (!destDir.isDirectory && !destDir.mkdirs()) {
                     throw ArtifactDownloadException(Kind.STORAGE, "Could not create the folder for the APK on this phone.")
                 }
@@ -296,7 +296,7 @@ class ArtifactDownloader(
                     }
                     staged += part to name
                     copyEntry(z, entry, part)
-                    verifyApk(part)
+                    verifyPackage(part, isBundle = name.endsWith(".aab", ignoreCase = true))
                 }
                 // Everything verified: only now touch the destination folder.
                 val saved = ArrayList<File>()
@@ -360,12 +360,18 @@ class ArtifactDownloader(
         }
     }
 
-    /** An APK is a zip that contains AndroidManifest.xml. Anything else is rejected. */
-    private fun verifyApk(file: File) {
-        val invalid = { ArtifactDownloadException(Kind.CORRUPT, "The file inside the artifact is not a valid APK.") }
+    /**
+     * An APK is a zip that contains AndroidManifest.xml; an Android App Bundle is a zip that contains
+     * base/manifest/AndroidManifest.xml. Anything else is rejected.
+     */
+    private fun verifyPackage(file: File, isBundle: Boolean) {
+        val invalid = {
+            ArtifactDownloadException(Kind.CORRUPT, "The file inside the artifact is not a valid ${if (isBundle) "AAB" else "APK"}.")
+        }
         if (file.length() <= 0L) throw invalid()
+        val manifestPath = if (isBundle) "base/manifest/AndroidManifest.xml" else "AndroidManifest.xml"
         try {
-            ZipFile(file).use { if (it.getEntry("AndroidManifest.xml") == null) throw invalid() }
+            ZipFile(file).use { if (it.getEntry(manifestPath) == null) throw invalid() }
         } catch (e: IOException) {
             throw invalid()
         }
@@ -373,7 +379,12 @@ class ArtifactDownloader(
 
     private fun safeName(raw: String): String {
         val cleaned = raw.replace(Regex("[^A-Za-z0-9._-]"), "_").trimStart('.').take(100)
-        return if (cleaned.isBlank() || !cleaned.endsWith(".apk", ignoreCase = true)) "app.apk" else cleaned
+        return when {
+            cleaned.endsWith(".aab", ignoreCase = true) && cleaned.length > 4 -> cleaned
+            cleaned.endsWith(".apk", ignoreCase = true) && cleaned.length > 4 -> cleaned
+            raw.endsWith(".aab", ignoreCase = true) -> "app.aab"
+            else -> "app.apk"
+        }
     }
 
     private fun uniqueName(name: String, used: MutableSet<String>): String {

@@ -7,6 +7,9 @@ import java.io.OutputStream
 /** An APK saved by the app. [file] lives in the app's private storage. */
 class StoredApk(val buildId: String, val file: File) {
     val fileName: String get() = file.name
+
+    /** Phase 6: true for an Android App Bundle (.aab); false for an APK. */
+    val isBundle: Boolean get() = file.name.endsWith(".aab", ignoreCase = true)
     val sizeBytes: Long get() = file.length()
     val lastModifiedMillis: Long get() = file.lastModified()
 }
@@ -29,7 +32,7 @@ class ApkStore(private val root: File) {
     fun list(buildId: String): List<StoredApk> {
         val dir = dirFor(buildId)
         return dir.listFiles().orEmpty()
-            .filter { it.isFile && it.name.endsWith(".apk") && it.length() > 0L }
+            .filter { it.isFile && (it.name.endsWith(".apk") || it.name.endsWith(".aab")) && it.length() > 0L }
             .sortedBy { it.name }
             .map { StoredApk(buildId, it) }
     }
@@ -44,6 +47,13 @@ class ApkStore(private val root: File) {
         if (!validFileName(fileName)) return false
         return File(dirFor(buildId), fileName).delete()
     }
+
+    /** Build ids that have at least one saved file, newest first. Used by the artifact manager. */
+    fun buildIdsWithFiles(): List<String> =
+        root.listFiles().orEmpty()
+            .filter { it.isDirectory && BUILD_ID.matches(it.name) && list(it.name).isNotEmpty() }
+            .sortedByDescending { dir -> dir.listFiles().orEmpty().maxOfOrNull { it.lastModified() } ?: 0L }
+            .map { it.name }
 
     fun deleteAll(buildId: String) {
         dirFor(buildId).deleteRecursively()

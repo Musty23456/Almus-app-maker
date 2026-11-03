@@ -315,6 +315,25 @@ class GitHubApiImpl(
         return response.body.takeLast(maxChars)
     }
 
+    override suspend fun cancelRun(owner: String, name: String, runId: Long) {
+        try {
+            request(
+                "POST", "/repos/${seg(owner)}/${seg(name)}/actions/runs/$runId/cancel",
+                notFound = Kind.NOT_FOUND, notFoundText = "Workflow run $runId was not found (it may have been deleted).",
+            )
+        } catch (e: GitHubException) {
+            // GitHub answers 409 when the run cannot be cancelled (it already finished, or is already being cancelled).
+            if (e.httpStatus == 409) {
+                throw GitHubException(
+                    Kind.CONFLICT,
+                    "This build can no longer be cancelled: it has already finished or is already being cancelled.",
+                    httpStatus = 409,
+                )
+            }
+            throw e
+        }
+    }
+
     // ---------------------------------------------------------------- HTTP core
 
     private suspend fun request(
