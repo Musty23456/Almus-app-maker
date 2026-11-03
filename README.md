@@ -1,12 +1,21 @@
-# Almus App Creator Pro (Phase 4)
+# Almus App Creator Pro (Phase 9)
 
 An Android app for creating projects, editing code and (later) building APKs on GitHub Actions, all from a phone.
 
 Phase 2: project manager + code editor with on-device storage (unchanged).
 Phase 3: real GitHub sign-in, repository selection and cloud builds on GitHub Actions (unchanged, see "Phase 3").
+**Phase 5 adds advanced project import / export, backup & restore and recent projects** (see "Phase 5" at the end).
 **Phase 4 completes the build result system: live build monitor, logs and compiler errors, APK download / share / save, retry and a smarter history** (see "Phase 4" below).
 
 ## Status: what is and is not verified
+
+> Phase 9 (Gemini AI): see PHASE9_REPORT.md. The **backend** (`backend/`, Node.js) was run and tested here: **30 tests pass** against a mock Gemini server, plus a mutation check. The **Android/Kotlin code of Phase 9 could NOT be compiled here** (this environment had no Kotlin compiler, Gradle, Android SDK or network), so its 100+ new JUnit tests were written but **not run**. Security-critical regexes and the diff algorithm were checked on the JVM. Build once with GitHub Actions (`./gradlew testDebugUnitTest assembleDebug`) and fix any compile errors before relying on it. **Also note:** the uploaded Phase 8 ZIP did not contain the `domain/build` and `service/build` packages that the code imports; they must be present in your real repository.
+
+> Phase 8: see PHASE8_REPORT.md. The new `debug` package (build-log analyzer, static checks, log engine, fix engine, AI-preparation layer, debug session) has **no Android dependency and was compiled with Kotlin 2.0.21 and tested here: 82 JUnit tests pass**. The Compose screens, navigation wiring and Gradle/AGP build of Phase 8 (like Phases 6 and 7) were **not** compiled here: build once with GitHub Actions (`./gradlew testDebugUnitTest assembleDebug`) before relying on them.
+
+> Phase 7: see PHASE7_REPORT.md. Like Phase 6, it could NOT be compiled or run where it was written (no Kotlin compiler, Gradle, Android SDK or network). Build it once with GitHub Actions (`./gradlew testDebugUnitTest assembleDebug`) and fix any compile errors before relying on it.
+
+> Phase 6: see PHASE6_REPORT.md. The Phase 6 code could not be compiled or run in the environment it was written in; it must be built once by GitHub Actions before you rely on it.
 
 The sandbox this was written in could not reach Google Maven / Maven Central and had no Android SDK, so the
 Android build has **never been run by the author**.
@@ -249,3 +258,245 @@ Notes: the "Create Signing Key" workflow refuses to run again once `ALMUS_KEYSTO
 - This signs the **debug** variant (same `app-debug.apk` name and path). A minified release build is not configured; it has never been compiled here and would need its own test.
 - Not run by the author: the Gradle signing block and the new workflow steps have only been checked statically (YAML parses, `keytool` command tested locally, 467 JVM tests). The first run is the real test.
 - Google Play signing/upload keys are not covered.
+
+## Phase 6: build management and release signing
+
+Phase 6 turns "Build" into a build manager. Everything from Phases 3 and 4 still works: a repository that still has the
+version 1 workflow keeps building plain debug APKs.
+
+**Build types** (Cloud build > Build type > Build configuration): Debug APK, Release APK, Release AAB, and Custom
+(APK or AAB, debug or release, signed or not).
+
+**Build configuration**: application ID, version name, version code, minimum SDK, target SDK, code shrinking (minify) and
+resource shrinking. Leave a field empty to keep the project's own value. The values are applied in the cloud by a small
+Gradle init script, so your project files are never edited. Every value is checked in the app and again in the workflow.
+This applies to every Android application module of the project.
+
+**Release signing** (Settings > Release signing): create a key (RSA 2048, valid 30 years, PKCS12) or import one
+(PKCS12 is verified on the phone; JKS is kept and verified by the cloud build). The keystore and passwords are stored
+encrypted on the phone (AES-256-GCM, key in the Android Keystore), the screen blocks screenshots, and nothing is written
+to your project or repository. Use "Back up" to save the keystore file yourself: if you lose the key or its password you
+can never update an app that was signed with it.
+
+**How cloud signing works**
+1. In the app: Release signing > Show secrets. Add four repository secrets in GitHub
+   (Settings > Secrets and variables > Actions): `ALMUS_SIGN_KEYSTORE_BASE64`, `ALMUS_SIGN_STORE_PASSWORD`,
+   `ALMUS_SIGN_KEY_ALIAS`, `ALMUS_SIGN_KEY_PASSWORD`. Then tap "I added the secrets" (the app cannot read GitHub secrets;
+   the build checks them again and says clearly if they are wrong).
+2. Copy the new `.github/workflows/almus-cloud-build.yml` (version 2, "Workflow setup" in the app) to the branch you
+   build from and to the default branch.
+3. Choose a Release build type and the key in Build configuration, then build.
+
+The workflow has two jobs. **build** runs your project's Gradle scripts and has no access to any secret; it produces an
+unsigned release file. **sign** reads the secrets, signs that file with `apksigner` (APK) or `jarsigner` (AAB), verifies the
+signature, rejects the Android debug key, and runs none of your project's code. The key file is deleted from the runner when
+the job ends. Passwords reach the tools only through environment variables and are never printed.
+
+**Managing builds**: Cancel build (running builds; if GitHub has not created the run yet, the request is remembered and
+sent as soon as it exists), Retry (repeats the build with the same type and settings), history with build type, status and
+duration, and download of APK and AAB files. Authentication errors show "connect again" as before.
+
+**Artifacts** (Settings > Saved APK and AAB files): every downloaded file with size, package name, version, build type,
+Share and Save to... (AAB cannot be installed; it is for upload to Google Play). For an APK the package and version are read
+from the file; for an AAB they come from your build settings when you set them.
+
+New dependency: BouncyCastle (`bcprov-jdk18on`, `bcpkix-jdk18on` 1.78.1), used only to create the certificate of a new key.
+
+Limitations: one set of signing secrets per repository (projects in the same repository share it); product flavors are not
+selectable (Gradle task names are limited to assembleDebug/assembleRelease/bundleDebug/bundleRelease); AAB package/version
+display depends on build settings; the override script has not been run against a real Gradle build yet (see
+PHASE6_REPORT.md).
+
+## Phase 7: background build monitoring, notifications and dashboard
+
+GitHub Actions still does the whole build. Phase 7 only **watches** it: the app checks the status of unfinished builds in the
+background, keeps the local build records in sync, and tells you what happened. Nothing from Phases 1-6 was removed; the
+build history screen is still there ("Full history" in the dashboard).
+
+### What it does
+- **Background monitoring with WorkManager.** While at least one build is unfinished, two kinds of jobs exist, both
+  requiring a network connection:
+  - a *watchdog* (periodic, 15 minutes - the minimum Android allows) that also looks again at builds whose live checking had stopped;
+  - a *chain* of one-time jobs while a build is running: each job checks, then schedules the next one (1 min while the build is
+    younger than 10 min, 2 min up to 30 min, then 5 min). When nothing is left to watch, both are cancelled.
+  Android decides when work really runs (Doze, App Standby, battery saver): every delay is a minimum, so a minimised or
+  closed app may be told about a build later than the delay says. No foreground service, exact alarm or battery-exemption
+  request is used (a unit test guards the manifest).
+- **Few requests.** One GitHub request per unfinished build per pass; builds the app is already following live are skipped;
+  the same build is not asked again within 30 s; a pass ends at the first connection failure or rate limit; at most 10 builds per
+  pass; builds older than 8 h are no longer watched.
+- **Retry and backoff.** A connection problem makes the worker return "retry": WorkManager repeats it with exponential
+  backoff (30 s base). After 4 attempts in a row the pass is treated as done and the chain continues at its normal pace.
+  A rate limit delays the next check until GitHub allows it (at most 15 min). A lost GitHub sign-in stops the checking and says
+  "Reconnect GitHub" instead of retrying forever.
+- **Recovery.** Records live in the app's private storage as before. At app start the tracker resumes unfinished builds (Phase 3), and
+  the monitor additionally checks builds whose checking had stopped (one request each) and resumes live following for those still
+  running. WorkManager keeps its schedule across process death and reboots, so a closed app is still told when the build ends.
+- **Notifications** (one per stage, remembered across restarts): build started, in progress (silent, updates in place, shows elapsed time),
+  succeeded, failed, cancelled. Each shows the project name, build type, status and result; tapping opens that build's details.
+  Old results (older than 12 h) and builds from before Phase 7 are not announced. Two channels: "Build progress" (quiet) and "Build results".
+- **Build dashboard** (Home > Build history "See all", or Settings > Build monitoring): counters (active / done / failed / cancelled),
+  filter chips, active builds with live progress, running time, refresh and cancel, and the history with duration and artifact availability
+  (APK/AAB ready, saved on this phone, expired, deleted, none).
+- **Controls.** Notifications on/off (Settings, default on); refresh button (checks every unfinished build once and resumes live following);
+  cancel for runs that are still unfinished (a cancel asked before GitHub created the run is sent when it appears); open build details.
+
+### Notification permission
+Android 13+ needs the notification permission. The dashboard shows a banner with "Allow notifications" while it is missing; if you refuse,
+the switch goes off and the app does not ask again. If you block notifications in Android settings, the app says so and opens that settings page.
+Builds and monitoring work exactly the same without notifications.
+
+### Where things are
+`service/monitor/`: `BuildSyncEngine` (one pass), `BuildMonitor` (store watching, recovery, WorkManager decisions), `BuildNotificationPlanner` /
+`BuildNotificationCoordinator` (what to show, exactly once), `BackgroundSyncPolicy` (all timings), `BuildSyncScheduler` (+ `WorkManagerBuildSyncScheduler`),
+`BuildSyncWorker`, `AndroidNotificationSink`, `NotificationController`. `CloudBuildOrchestrator.syncOnce` is the one-shot status check.
+`ui/dashboard/`: model, view model, screen.
+
+### Tests (JVM unit tests, `app/src/test/.../monitor`)
+Background pass and scheduling decisions, restart recovery from disk (`FileBuildStore`), offline/online (network loss, retry, one notification),
+rate limit, lost sign-in, several simultaneous builds, request economy, notification rules and permission states, dashboard model and view model,
+settings switch, manifest guard. WorkManager itself and the real notification drawer are not unit-testable on a plain JVM: see PHASE7_REPORT.md
+for the on-device checklist.
+
+## Phase 8: debugging and error analysis
+
+Phase 8 helps you find out **why a build failed** and **what looks wrong in the code**, and lets you fix it with a preview and undo.
+Nothing from Phases 1-7 was removed.
+
+### What is real and what is not (please read)
+- **Build log analysis is real**: it reads the actual GitHub Actions log of a build and groups the errors it finds.
+- **Code checks are static heuristics**: simple rules that read your files **without compiling or running them**. They find common
+  mistakes (missing imports, unused code, unbalanced brackets, missing resources, manifest and Gradle slips) and **can miss problems
+  or be wrong**; each finding shows a confidence level. They are **not** a compiler and **not** a runtime debugger.
+- **There is no live Logcat.** Android only lets an app read its own log; reading another app's log needs ADB or a debug agent.
+  The architecture has a `LogcatSource` port and a `threadtime` line parser, so a real source can be added later, but nothing
+  pretends to show runtime logs today.
+- **There is no AI in Phase 8.** The preparation is in place (see below) but no model is called and no AI answer is written into the app.
+
+### How to use it
+- **After a failed build:** Build status > **Analyze errors**. **From the editor:** menu (three dots) > **Check code & errors**.
+- **Errors tab:** every problem with message, file, line, category, severity and a suggested solution. **Open in editor** jumps to the
+  exact file and line (and column when known). Filter: all / build log / code checks.
+- **Log tab:** build log with levels (error / warning / info / debug), search (plain or regex, case option), **Copy**, and **Export**
+  as .txt or .json through the system file picker. Tokens, passwords and keys are removed before anything is shown, copied or exported.
+- **Fixes tab:** each suggestion shows before/after lines. **Apply** writes the file, **Reject** hides it, **Undo** restores the text from
+  before the last applied fix. Safety: a fix is refused if the file changed after it was suggested, and undo is refused if you edited the
+  file after applying (nothing of yours is overwritten). Undo history lasts for the current app session.
+
+### What the build analyzer recognises
+Kotlin compilation (K1, K2 and command-line formats), Java compilation (with `symbol:` and column), Gradle failures ("What went wrong"),
+missing dependencies and repositories, AndroidManifest errors (including manifest-merger), resource linking (AAPT) errors, and
+Android SDK configuration (missing SDK, licences, compileSdk/minSdk/targetSdk). Messages are matched by rules, so the suggestions are
+rule-based text, not AI. CI paths (for example `/home/runner/work/...`) are mapped to your project files.
+
+### Code checks (static)
+Missing and unused imports, unused locals, undefined names (only when safe), reassigning a `val`, unbalanced brackets, empty `catch`,
+`!!`, `GlobalScope`, blocking calls in UI files, Java `==` on strings, missing semicolons, unreachable code, division by zero, XML tag
+balance, missing `@type/name` and `R.type.name` resources, manifest (exported, missing class, INTERNET), Gradle (namespace, SDK versions,
+dependency without version). Checked on the real code of this project and on freshly generated templates (0 false errors).
+
+### Preparing for AI debugging (Gemini later)
+`debug/AiDebug.kt` defines the contract; no network code exists yet:
+`AiRequestBuilder` (redacted, size-limited request: issues, log excerpt, code around the error; secret-looking files are never included)
+-> `AiPromptRenderer` (provider-independent prompt with a JSON answer schema) -> a future `AiDebugProvider` -> `AiResponseParser` ->
+`AiPatchConverter`, which turns search/replace or unified-diff patches into the same `FixProposal` as rule-based fixes (so they get the
+same preview / apply / reject / undo) **only if they match your real file exactly**; otherwise they are rejected, never guessed.
+The UI shows exactly what would be sent and asks first; the default `NoAiProvider` says the AI is not connected.
+
+### Where things are
+`debug/` (pure Kotlin, no Android): `BuildErrorAnalyzer`, `ErrorKnowledge`, `LogCleaner`, `LogEngine` (parse / filter / export), `StaticDiagnostics`,
+`KnownSymbols`, `FixModels`, `FixManager`, `AiDebug`, `LogcatSource`, `DebugSession`, `RouteArgs`. `service/debug/DebugHub` (one session per
+project/build), `ui/debug/` (view model, screen). The editor got `openAt(path, line, column)` and re-reads changed files when it resumes.
+`BuildDetailsService.loadRawLog` reads up to 400,000 characters from the end of the job log.
+
+### Tests (`app/src/test/.../debug`, sample projects with intentional errors in `app/src/test/resources/phase8-samples`)
+Build-log analysis (real kotlinc/javac output and Gradle/AAPT/manifest logs), static checks on a sample Android project, every offered fix
+applies and removes its issue, templates have no false errors, navigation targets point at the right line, log filter/search/export, fix
+apply / stale / reject / undo / conflict, AI request redaction, response parsing and patch conversion, route argument encoding.
+
+### Phase 8 limitations
+Static checks are heuristic. The sample Gradle/AAPT/manifest logs were written by hand from the known formats (the kotlinc and javac logs are
+real compiler output). Undo history is not kept after the app closes. The Compose screens were not compiled or run (see PHASE8_REPORT.md).
+
+## Phase 9: Gemini AI assistant
+
+Architecture: `Android app -> AI chat/editor screens -> ALMUS backend (backend/) -> Gemini API`. **The Gemini API key exists only on the backend.**
+The app stores the backend address and an access code (Keystore-encrypted) and uses a 1-hour session token. Setup: **backend/docs/API_CONFIGURATION.md**.
+
+**Where to find it**
+- Settings > *AI assistant (Gemini)* > **AI backend settings** (address, access code, test connection, model) and **Generate an app with AI**; Projects top bar > **AI**.
+- Editor menu > **AI assistant** for the open project: tabs **Chat**, **Edit**, **Review**, **Changes**.
+- Debug screen (Phase 8) now has Gemini as its AI provider (Explain / Suggest corrections / Generate patch), still behind the Phase 8 "what will be sent" confirmation.
+
+**Features**
+- *Chat*: history per project (kept on the phone), streaming answers, syntax-highlighted code blocks with Copy, regenerate/retry, stop, clear, modes Ask / Explain code / Generate code / Edit code, attach files (shown before sending), "Apply to file" (turns a code block into a reviewable change).
+- *Project generator*: describe an app -> **plan to review/edit** -> generate -> review each generated file (view/untick) -> create project. Generated files are validated (safe relative paths, no binaries/wrapper/credential/`.github` files, no secrets, size/count limits, duplicate and file-vs-folder conflicts, package/path match, manifest and Gradle presence) and run through the Phase 8 code checks.
+- *Editing an existing project*: the AI first sees only the **file list** and says which files it needs; you confirm the files that will be sent; it proposes changes (full files or exact find/replace edits that must match once); you see per-file before/after diffs.
+- *Change management*: nothing is written until **Apply changes**. Files changed since the suggestion make Apply refuse (nothing written); a failed write rolls back; **Reject** / bring back; **Undo** per applied change (kept on disk, survives restarts); "Restore anyway" asks before discarding later edits. The AI can never delete files.
+- *Review*: quality, security, performance, architecture, best practices, findings sorted by severity with file/line shortcuts.
+- *Context control*: only the files you pick (max 12, 40 K chars each, 150 K total); credential files and build output are never sent; secret-looking text is replaced before sending and again on the backend; dependency names and file paths (no content) give the model project awareness.
+
+**Backend**: sign-in with access codes, signed expiring tokens, per-user per-minute/per-day limits, login lockout, size limits, secret redaction, reviewed per-task instructions, configurable models, Gemini retries/timeouts, streaming (SSE), clear key-free errors, no prompt logging. `cd backend && npm test`.
+
+**Tests**: `backend/test` (30, Node built-in runner) and `app/src/test/java/com/almus/appcreatorpro/ai` (Kotlin, JUnit 4 + coroutines-test).
+
+**Known limitations**: see PHASE9_REPORT.md (Kotlin not compiled here; one backend instance because limits are in memory; the AI cannot delete or rename files; generated projects are checked statically, not compiled, so the first cloud build is the real test).
+
+## Phase 5: advanced project import and export
+
+### What it does
+- **Import from ZIP** (Projects > Import > Choose ZIP file): unpacks safely, detects the project type, shows a review screen
+  (name, type, package, file counts, warnings) and saves **nothing until you tap Import**.
+- **Import a folder / Android Studio project** (Projects > Import > Choose folder): uses Android's folder picker (Storage
+  Access Framework). Pick the project's root folder.
+- **Import from GitHub** (Projects > Import > Browse repositories): uses the existing GitHub sign-in (Settings > GitHub).
+  Pick a repository, pick a branch, the app downloads that branch's current commit as a ZIP and shows the same review screen.
+- **Export** (project card menu > Export as ZIP): choose where to save in the system "save as" dialog. The ZIP has the same
+  folder structure as the project and contains every file, including images and other non-text files kept by an import.
+- **Backups** (card menu > Back up now / Backups; Projects top bar menu > All backups): any number of backups per project
+  (30 manual ones; safety copies do not count). Restore **as a new project** (never overwrites anything) or **replace the
+  current project** (asks first and always saves a safety backup of the current state first). Backups are kept when a
+  project is deleted and can restore it as a new project.
+- **Recent projects**: projects you open are remembered ("Recently opened" row), and the list has search (name, package,
+  description, type; every word must match) and sorting (updated, opened, name A-Z / Z-A, created, type).
+
+### Supported projects
+Native Android (Kotlin, Java; Gradle/AndroidManifest based) and HTML/CSS/JavaScript. Kotlin wins when a project has both
+Kotlin and Java. Flutter and anything unrecognized is reported on the review screen and cannot be imported.
+
+### Safety
+- **Path traversal ("zip slip")**: any entry that is absolute, names a drive, contains `..` or a control character makes
+  the whole import fail; every destination is also checked against the staging folder's canonical path. Only plain files
+  are ever created (a ZIP "symlink" becomes an ordinary file).
+- **Large / hostile archives**: everything runs on a background thread with progress and Cancel. Limits are enforced on the
+  bytes really read: 20,000 files, 500 MB total, 100 MB per file (bigger files are skipped and reported), and a
+  compression-ratio check against ZIP bombs.
+- Unpacking happens in `filesDir/transfer-staging`, outside the project list. Any failure or Cancel removes it, so a failed
+  import never leaves a half-made project. Leftovers of a killed app are removed at the next start.
+- **Left out on purpose**: `.git`, `.idea`, `.gradle`, `node_modules`, Gradle `build/{intermediates,outputs,generated,...}`
+  folders, `.apk`/`.aab`, `local.properties`, `.jks`/`.keystore` (signing keys). The review screen counts what was left out.
+- GitHub: the token goes only to api.github.com; the redirect to the download server is followed without it, https only,
+  and signed URLs are never shown or logged.
+- **Permissions**: none added. The system file/folder pickers grant access to exactly what you pick.
+
+### Storage layout and one important limitation
+```
+projects/<id>/project.properties   (unchanged)
+projects/<id>/files/...            editable UTF-8 text files <= 512 KB with editor-safe names (unchanged; editor, cloud builds)
+projects/<id>/extra/...            NEW: everything else an import found (images, jars, large files, other names)
+backups/<projectId>/<backupId>.zip + .properties
+```
+Files in `extra/` are **kept and exported/backed up, but not shown in the editor and not uploaded by cloud builds** (those
+only ever read `files/`). So an imported Android project that needs its PNG icons or a Gradle wrapper jar in the repository
+will not build from the app's cloud build until that is supported. The review screen tells you how many such files exist.
+Import from GitHub does not keep git history (only the files of the chosen commit).
+
+### Files
+New: `domain/transfer/*` (models, errors, `ZipEntryGuard`, `ProjectDetector`, `ProjectNaming`, `ProjectListFilter`),
+`domain/repository/ProjectTransferRepository.kt`, `RecentProjectsTracker.kt`, `data/transfer/*` (`ProjectStager`,
+`ProjectImportService`, `ProjectArchiver`, `BackupStore`, `CountingInputStream`), `data/storage/RecentProjectsStore.kt`,
+`service/transfer/*` (SAF access, GitHub download), `ui/transfer/*` (import, backups, progress UI), tests in
+`app/src/test/.../transfer/`. Modified: `FileProjectStore`, `AppErrors`, `ProjectsViewModel`, `ProjectsScreen`, `AppContainer`,
+`AppViewModelProvider`, `Routes`, `AlmusApp`, `app/build.gradle.kts` (version only). See `PHASE5_REPORT.md` for the full list and
+the verification status.
+
