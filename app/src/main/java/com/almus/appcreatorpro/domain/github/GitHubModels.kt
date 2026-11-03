@@ -134,6 +134,10 @@ fun WorkflowArtifact.toInfo() = BuildArtifactInfo(
     status = if (expired) ArtifactStatus.EXPIRED else ArtifactStatus.AVAILABLE,
 )
 
+/** Artifacts the user should see: the hand-over file between the build and sign jobs is an implementation detail. */
+fun List<WorkflowArtifact>.toVisibleInfos(): List<BuildArtifactInfo> =
+    map { it.toInfo() }.filter { it.kind != com.almus.appcreatorpro.domain.build.ArtifactKind.INTERMEDIATE }
+
 data class WorkflowStep(val name: String, val conclusion: String?)
 
 data class WorkflowJob(val id: Long, val name: String, val conclusion: String?, val steps: List<WorkflowStep>)
@@ -170,10 +174,19 @@ data class CloudBuildConfig(
         const val GRADLE_TASK = "assembleDebug"
         const val WORKFLOW_FILE = "almus-cloud-build.yml"
         const val WORKFLOW_PATH = ".github/workflows/$WORKFLOW_FILE"
-        const val WORKFLOW_VERSION = 1
+        /** Current version of almus-cloud-build.yml. Version 2 (Phase 6) adds release/AAB builds, overrides and signing. */
+        const val WORKFLOW_VERSION = 2
+
+        /** Version 1 (Phase 3/4) still works for plain debug APK builds, so repositories that have it keep building. */
+        const val MIN_WORKFLOW_VERSION = 1
 
         /** The workflow file contains this exact marker line so the app can tell whether it is installed and current. */
         const val WORKFLOW_MARKER = "# almus-cloud-build-workflow-version: $WORKFLOW_VERSION"
+
+        private val markerPattern = Regex("(?m)^# almus-cloud-build-workflow-version: (\\d{1,3})\\s*$")
+
+        /** The version number written in a workflow file, or null when the marker line is missing. */
+        fun workflowVersionOf(text: String): Int? = markerPattern.find(text)?.groupValues?.get(1)?.toIntOrNull()
 
         fun defaultDir(projectName: String): String {
             val slug = projectName.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').take(40)

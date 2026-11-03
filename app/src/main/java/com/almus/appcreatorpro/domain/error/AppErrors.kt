@@ -26,5 +26,6 @@ fun Throwable.toUserMessage(): String = when (this) {
     is com.almus.appcreatorpro.domain.github.GitHubException -> message ?: "A GitHub error occurred."
     is com.almus.appcreatorpro.domain.github.DeviceFlowException -> message ?: "GitHub sign-in failed."
     is com.almus.appcreatorpro.domain.github.CloudBuildNotReadyException -> message ?: "The build cannot start yet."
+    is com.almus.appcreatorpro.domain.transfer.TransferException -> message ?: "The transfer failed."
     else -> "Something went wrong. Please try again."
 }

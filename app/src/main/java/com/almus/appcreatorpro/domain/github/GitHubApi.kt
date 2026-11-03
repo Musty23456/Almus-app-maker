@@ -63,4 +63,12 @@ interface GitHubApi {
 
     /** Last [maxChars] characters of a job's log. */
     suspend fun getJobLogTail(owner: String, name: String, jobId: Long, maxChars: Int): String
+
+    /**
+     * Phase 6: asks GitHub to cancel a run. GitHub answers "accepted" and then stops the run, so the caller keeps
+     * following the run to see the real end. The default keeps older implementations compiling.
+     */
+    suspend fun cancelRun(owner: String, name: String, runId: Long) {
+        throw GitHubException(GitHubException.Kind.UNKNOWN, "Cancelling a build is not supported here.")
+    }
 }

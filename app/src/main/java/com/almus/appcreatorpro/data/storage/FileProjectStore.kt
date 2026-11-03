@@ -6,7 +6,9 @@ import com.almus.appcreatorpro.domain.error.ValidationException
 import com.almus.appcreatorpro.domain.model.Project
 import com.almus.appcreatorpro.domain.model.ProjectType
 import com.almus.appcreatorpro.domain.model.SourceFileEntry
+import com.almus.appcreatorpro.domain.repository.ProjectContentRoots
 import com.almus.appcreatorpro.domain.repository.ProjectRepository
+import com.almus.appcreatorpro.domain.repository.ProjectTransferRepository
 import com.almus.appcreatorpro.domain.repository.SourceFileRepository
 import com.almus.appcreatorpro.domain.template.ProjectTemplates
 import com.almus.appcreatorpro.domain.validation.FilePathValidator
@@ -54,7 +56,7 @@ class FileProjectStore(
     private val clock: () -> Long = System::currentTimeMillis,
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
-) : ProjectRepository, SourceFileRepository {
+) : ProjectRepository, SourceFileRepository, ProjectTransferRepository {
 
     private val lock = Any()
     private var loaded = false
@@ -139,6 +141,139 @@ class FileProjectStore(
             throw StorageException(Kind.IO, "Could not delete the project files. Try again.")
         }
         projects.value = projects.value.filterNot { it.id == id }
+    }
+
+    // ---------------------------------------------------------------- ProjectTransferRepository (Phase 5)
+
+    override suspend fun importStaged(
+        stagedDir: File,
+        name: String,
+        packageName: String,
+        description: String,
+        type: ProjectType,
+    ): Project = io {
+        val cleanName = name.trim()
+        val cleanPackage = packageName.trim()
+        ProjectNameValidator.validate(cleanName, projects.value.map { it.name }).errorMessage
+            ?.let { throw ValidationException(it) }
+        val pkg = if (type.requiresPackage) {
+            PackageNameValidator.validate(cleanPackage).errorMessage?.let { throw ValidationException(it) }
+            cleanPackage
+        } else {
+            ""
+        }
+        val stagedFiles = File(stagedDir, SOURCE_DIR)
+        val stagedExtra = File(stagedDir, EXTRA_DIR)
+        if (!stagedFiles.isDirectory && !stagedExtra.isDirectory) {
+            throw StorageException(Kind.CORRUPTED, "There is nothing to import.")
+        }
+
+        val id = idGenerator()
+        if (!ID_REGEX.matches(id)) throw StorageException(Kind.IO, "Could not create a project id.")
+        val dir = File(rootDir, id)
+        if (dir.exists()) throw StorageException(Kind.ALREADY_EXISTS, "A project folder with this id already exists.")
+
+        val now = clock()
+        val project = Project(id, cleanName, pkg, description.trim(), now, now, type)
+        try {
+            if (!dir.mkdirs()) throw IOException("Could not create the project folder.")
+            if (stagedFiles.isDirectory) moveDirectory(stagedFiles, File(dir, SOURCE_DIR)) else File(dir, SOURCE_DIR).mkdirs()
+            if (stagedExtra.isDirectory) moveDirectory(stagedExtra, File(dir, EXTRA_DIR))
+            writeMeta(dir, project) // last: a project only "exists" once its metadata is complete
+        } catch (e: Exception) {
+            dir.deleteRecursively()
+            throw e
+        }
+        projects.value = projects.value + project
+        project
+    }
+
+    override suspend fun replaceContents(projectId: String, stagedDir: File): Project = io {
+        if (!ID_REGEX.matches(projectId) || projects.value.none { it.id == projectId }) {
+            throw StorageException(Kind.NOT_FOUND, "This project no longer exists.")
+        }
+        val stagedFiles = File(stagedDir, SOURCE_DIR)
+        val stagedExtra = File(stagedDir, EXTRA_DIR)
+        if (!stagedFiles.isDirectory && !stagedExtra.isDirectory) {
+            throw StorageException(Kind.CORRUPTED, "There is nothing to restore.")
+        }
+        val dir = File(rootDir, projectId)
+        val liveFiles = File(dir, SOURCE_DIR)
+        val liveExtra = File(dir, EXTRA_DIR)
+        val oldHolder = File(dir, REPLACED_DIR)
+        oldHolder.deleteRecursively()
+        if (!oldHolder.mkdirs()) throw StorageException(Kind.IO, "Could not prepare the restore. Is the phone's storage full?")
+        val oldFiles = File(oldHolder, SOURCE_DIR)
+        val oldExtra = File(oldHolder, EXTRA_DIR)
+
+        // 1) put the current files aside, 2) move the new ones in, 3) undo step 1 if step 2 failed.
+        try {
+            if (liveFiles.isDirectory) moveDirectory(liveFiles, oldFiles)
+            if (liveExtra.isDirectory) moveDirectory(liveExtra, oldExtra)
+        } catch (e: Exception) {
+            rollbackReplace(oldFiles, liveFiles, oldExtra, liveExtra)
+            oldHolder.deleteRecursively()
+            throw e
+        }
+        try {
+            if (stagedFiles.isDirectory) moveDirectory(stagedFiles, liveFiles) else liveFiles.mkdirs()
+            if (stagedExtra.isDirectory) moveDirectory(stagedExtra, liveExtra)
+        } catch (e: Exception) {
+            liveFiles.deleteRecursively()
+            liveExtra.deleteRecursively()
+            rollbackReplace(oldFiles, liveFiles, oldExtra, liveExtra)
+            oldHolder.deleteRecursively()
+            throw e
+        }
+        oldHolder.deleteRecursively()
+        touch(projectId)
+        projects.value.first { it.id == projectId }
+    }
+
+    override suspend fun contentRoots(projectId: String): ProjectContentRoots = io {
+        val sourceDir = sourceDirOf(projectId)
+        ProjectContentRoots(sourceDir, File(File(rootDir, projectId), EXTRA_DIR))
+    }
+
+    /**
+     * A restore that was interrupted (process killed) after the old files were put aside but before the new ones
+     * were in place leaves the old files in [REPLACED_DIR]; bring them back so the project is not left empty.
+     */
+    private fun recoverInterruptedReplace(dir: File) {
+        val holder = File(dir, REPLACED_DIR)
+        if (!holder.isDirectory) return
+        val liveFiles = File(dir, SOURCE_DIR)
+        if (liveFiles.exists()) return
+        try {
+            val oldFiles = File(holder, SOURCE_DIR)
+            val oldExtra = File(holder, EXTRA_DIR)
+            if (oldFiles.isDirectory) moveDirectory(oldFiles, liveFiles)
+            val liveExtra = File(dir, EXTRA_DIR)
+            if (oldExtra.isDirectory && !liveExtra.exists()) moveDirectory(oldExtra, liveExtra)
+            holder.deleteRecursively()
+        } catch (_: Exception) {
+            // best effort
+        }
+    }
+
+    private fun rollbackReplace(oldFiles: File, liveFiles: File, oldExtra: File, liveExtra: File) {
+        try {
+            if (oldFiles.isDirectory && !liveFiles.exists()) moveDirectory(oldFiles, liveFiles)
+            if (oldExtra.isDirectory && !liveExtra.exists()) moveDirectory(oldExtra, liveExtra)
+        } catch (_: Exception) {
+            // best effort: nothing more can be done here
+        }
+    }
+
+    /** Renames [from] to [to] (same file system); copies and deletes if a rename is not possible. */
+    private fun moveDirectory(from: File, to: File) {
+        to.parentFile?.mkdirs()
+        try {
+            Files.move(from.toPath(), to.toPath())
+        } catch (e: IOException) {
+            if (!from.copyRecursively(to, overwrite = false)) throw IOException("Could not move files.")
+            from.deleteRecursively()
+        }
     }
 
     // ---------------------------------------------------------------- SourceFileRepository
@@ -253,6 +388,7 @@ class FileProjectStore(
             }
             try {
                 found += readMeta(dir, meta)
+                recoverInterruptedReplace(dir)
             } catch (e: Exception) {
                 problems += "Project folder '${dir.name}' is damaged and was skipped (${e.message ?: "unreadable"})."
             }
@@ -376,6 +512,8 @@ class FileProjectStore(
     private companion object {
         const val META_FILE = "project.properties"
         const val SOURCE_DIR = "files"
+        const val EXTRA_DIR = "extra"
+        const val REPLACED_DIR = "replaced-old"
         val ID_REGEX = Regex("^[A-Za-z0-9_-]{1,64}$")
     }
 }

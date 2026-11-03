@@ -72,6 +72,10 @@ data class BuildRecord(
     val finishedAtMillis: Long? = null,
     /** True when the app stopped polling (timeout, lost connection, expired sign-in) before a final state. */
     val pollingStopped: Boolean = false,
+    /** Phase 6: what was asked for (build type, overrides). Null for builds made before Phase 6 = debug APK. */
+    val configuration: com.almus.appcreatorpro.domain.build.BuildConfiguration? = null,
+    /** Phase 6: true after the user asked to cancel and GitHub has not reported the end of the run yet. */
+    val cancelRequested: Boolean = false,
 )
 
 /** Whether a build artifact can still be downloaded from GitHub. */
@@ -97,10 +101,20 @@ data class BuildArtifactInfo(
     fun effectiveStatus(nowMillis: Long): ArtifactStatus =
         if (status == ArtifactStatus.AVAILABLE && expiresAtMillis != null && nowMillis >= expiresAtMillis) ArtifactStatus.EXPIRED else status
 
+    val kind: com.almus.appcreatorpro.domain.build.ArtifactKind
+        get() = com.almus.appcreatorpro.domain.build.ArtifactNaming.kindOf(name)
+
     val isApk: Boolean get() = name.startsWith(APK_PREFIX)
+
+    /** Phase 6: an Android App Bundle (almus-aab-...). */
+    val isBundle: Boolean get() = name.startsWith(AAB_PREFIX)
+
+    /** An APK or an AAB: the files a user wants to download. Logs and hand-over files are not deliverables. */
+    val isDeliverable: Boolean get() = isApk || isBundle
 
     companion object {
         const val APK_PREFIX = "almus-apk-"
+        const val AAB_PREFIX = "almus-aab-"
     }
 }
 

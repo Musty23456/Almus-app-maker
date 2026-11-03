@@ -12,7 +12,9 @@ object LogRedactor {
         Regex("Bearer\\s+[A-Za-z0-9._~+/=-]{12,}", RegexOption.IGNORE_CASE) to "Bearer ***",
         Regex("(Authorization\\s*[:=]\\s*)\\S+(\\s+\\S+)?", RegexOption.IGNORE_CASE) to "\$1***",
         // NAME=value / NAME: value where NAME looks like a secret (GITHUB_TOKEN, db_password, API_KEY, PRIVATE_KEY ...).
-        Regex("(\\b[A-Za-z0-9_.-]*(?:token|secret|passwd|password|api_?key|private_?key|credential)[A-Za-z0-9_.-]*\\s*[=:]\\s*)(?!\\*\\*\\*)\\S+", RegexOption.IGNORE_CASE) to "\$1***",
+        Regex("(\\b[A-Za-z0-9_.-]*(?:token|secret|passwd|password|passphrase|store_?pass|key_?pass|pwd|api_?key|private_?key|credential|keystore)[A-Za-z0-9_.-]*\\s*[=:]\\s*)(?!\\*\\*\\*)\\S+", RegexOption.IGNORE_CASE) to "\$1***",
+        // Phase 6: a long base64 blob (a keystore file written into a log) is never useful to show.
+        Regex("(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{200,}={0,2}") to "***",
         // Signed-URL query parameters (storage links): sig=..., X-Amz-Signature=..., access_token=...
         Regex("((?:[?&]|\\b)(?:sig|signature|x-amz-signature|x-amz-credential|access_token|sv|se|sp|skoid|sktid)=)[^&\\s\"']+", RegexOption.IGNORE_CASE) to "\$1***",
     )

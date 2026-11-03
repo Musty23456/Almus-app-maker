@@ -9,6 +9,7 @@ import com.almus.appcreatorpro.service.github.arr
 import com.almus.appcreatorpro.service.github.asObj
 import com.almus.appcreatorpro.service.github.bool
 import com.almus.appcreatorpro.service.github.long
+import com.almus.appcreatorpro.service.github.obj
 import com.almus.appcreatorpro.service.github.str
 
 /** Stable on-disk form of a [BuildRecord]. Unknown/missing fields fall back to safe defaults. */
@@ -43,6 +44,8 @@ object BuildRecordJson {
             },
             "finishedAtMillis" to r.finishedAtMillis,
             "pollingStopped" to r.pollingStopped,
+            "configuration" to r.configuration?.let { BuildConfigurationJson.toMap(it) },
+            "cancelRequested" to r.cancelRequested,
         ),
     )
 
@@ -82,6 +85,8 @@ object BuildRecordJson {
             },
             finishedAtMillis = o.long("finishedAtMillis"),
             pollingStopped = o.bool("pollingStopped") ?: false,
+            configuration = o.obj("configuration")?.let { BuildConfigurationJson.fromMap(it) },
+            cancelRequested = o.bool("cancelRequested") ?: false,
         )
         } catch (e: MiniJson.JsonException) {
             null
