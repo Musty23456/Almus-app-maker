@@ -23,8 +23,8 @@ android {
         applicationId = "com.almus.appcreatorpro"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.4.1-signed"
+        versionCode = 10
+        versionName = "0.9.0"
     }
 
     signingConfigs {
@@ -77,6 +77,10 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/versions/**"
+            excludes += "/META-INF/*.SF"
+            excludes += "/META-INF/*.DSA"
+            excludes += "/META-INF/*.RSA"
         }
     }
 
@@ -102,6 +106,9 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    implementation(libs.bouncycastle.prov)
+    implementation(libs.bouncycastle.pkix)
+    implementation(libs.androidx.work.runtime.ktx)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
