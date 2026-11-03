@@ -12,5 +12,9 @@ class AlmusApplication : Application() {
         container = AppContainer(this)
         // Continue following any cloud build that was still running when the app was last closed.
         container.buildTracker.resumeUnfinished()
+        // Phase 7: notifications and the WorkManager schedule follow every change of a build; builds whose checking had
+        // stopped while the app was closed are looked at again once.
+        container.buildMonitor.start()
+        container.buildMonitor.recoverOnStart()
     }
 }
