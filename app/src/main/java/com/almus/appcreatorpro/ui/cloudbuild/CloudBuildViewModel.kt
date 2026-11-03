@@ -2,7 +2,10 @@ package com.almus.appcreatorpro.ui.cloudbuild
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.almus.appcreatorpro.data.repository.BuildConfigurationStore
 import com.almus.appcreatorpro.data.repository.CloudBuildConfigStore
+import com.almus.appcreatorpro.domain.build.BuildConfiguration
+import com.almus.appcreatorpro.domain.build.BuildConfigurationValidator
 import com.almus.appcreatorpro.domain.error.toUserMessage
 import com.almus.appcreatorpro.domain.github.CloudBuildConfig
 import com.almus.appcreatorpro.domain.github.CloudBuildInputValidator
@@ -38,9 +41,14 @@ data class CloudBuildUiState(
     /** Why the last "Build" tap did nothing (nothing was uploaded). */
     val rejected: List<String> = emptyList(),
     val error: String? = null,
+    /** Phase 6: the build type and settings that "Build" will use (edited in Build configuration). */
+    val buildConfig: BuildConfiguration = BuildConfiguration.DEFAULT,
 ) {
+    val buildConfigErrors: List<String> get() = BuildConfigurationValidator.validate(buildConfig)
+
     val canStart: Boolean
-        get() = connected && config != null && dirError == null && gradleError == null && !starting && !checking
+        get() = connected && config != null && dirError == null && gradleError == null && !starting && !checking &&
+            buildConfigErrors.isEmpty()
 }
 
 class CloudBuildViewModel(
@@ -51,6 +59,7 @@ class CloudBuildViewModel(
     private val orchestrator: CloudBuildOrchestrator,
     private val tracker: BuildTracker,
     private val workflowTemplate: WorkflowTemplateProvider,
+    private val buildConfigs: BuildConfigurationStore? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(CloudBuildUiState())
@@ -84,6 +93,7 @@ class CloudBuildViewModel(
                     config = saved?.copy(projectDir = dir, gradleVersion = gradle),
                     dir = dir,
                     gradle = gradle,
+                    buildConfig = buildConfigs?.get(projectId) ?: BuildConfiguration.DEFAULT,
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -122,7 +132,7 @@ class CloudBuildViewModel(
         _state.update { it.copy(checking = true, preflight = null, rejected = emptyList()) }
         viewModelScope.launch {
             try {
-                val result = orchestrator.preflight(project, config)
+                val result = orchestrator.preflight(project, config, s.buildConfig)
                 _state.update { it.copy(checking = false, preflight = result) }
             } catch (e: CancellationException) {
                 throw e
@@ -141,7 +151,7 @@ class CloudBuildViewModel(
         _state.update { it.copy(starting = true, rejected = emptyList(), error = null) }
         viewModelScope.launch {
             try {
-                when (val result = tracker.startBuild(project, config)) {
+                when (val result = tracker.startBuild(project, config, s.buildConfig)) {
                     is StartResult.Rejected -> _state.update { it.copy(starting = false, rejected = result.reasons) }
                     is StartResult.Started -> {
                         _state.update { it.copy(starting = false) }

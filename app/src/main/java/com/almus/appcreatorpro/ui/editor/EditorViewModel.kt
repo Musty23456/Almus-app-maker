@@ -2,6 +2,7 @@ package com.almus.appcreatorpro.ui.editor
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.almus.appcreatorpro.debug.SourceText
 import com.almus.appcreatorpro.domain.error.StorageException
 import com.almus.appcreatorpro.domain.error.toUserMessage
 import com.almus.appcreatorpro.domain.model.Project
@@ -141,6 +142,40 @@ class EditorViewModel(
             throw e
         } catch (e: Exception) {
             post(e.toUserMessage(), isError = true)
+        }
+    }
+
+    /**
+     * Phase 8: opens [path] and puts the caret on [line] (and [column] when given; otherwise the whole line is
+     * selected). A line past the end of the file is clamped, so a stale line number never crashes the editor.
+     */
+    fun openAt(path: String, line: Int?, column: Int?) {
+        viewModelScope.launch {
+            openFileInternal(path)
+            val open = _state.value.openFiles.firstOrNull { it.path == path } ?: return@launch
+            val sel = SourceText.selectionFor(open.value.text, line, column)
+            applyProgrammatic(path, open.value.copy(selStart = sel.first, selEnd = sel.last), recordHistory = false)
+        }
+    }
+
+    /**
+     * Phase 8: the debug screen can change files on disk (applied fixes, undo). When the editor comes back to the
+     * front, tabs without unsaved typing are re-read; a tab with unsaved typing is never overwritten.
+     */
+    fun resyncFromDisk() {
+        viewModelScope.launch {
+            var conflicts = 0
+            for (open in _state.value.openFiles) {
+                val disk = try { files.readFile(projectId, open.path) } catch (e: CancellationException) { throw e } catch (e: Exception) { continue }
+                if (disk == open.savedText) continue
+                if (open.isDirty) { conflicts++; continue }
+                val caret = open.value.cursor.coerceAtMost(disk.length)
+                histories[open.path] = UndoHistory()
+                replaceOpen(open.path) {
+                    it.copy(value = EditorValue(disk, caret, caret), savedText = disk, revision = it.revision + 1, canUndo = false, canRedo = false)
+                }
+            }
+            if (conflicts > 0) post("$conflicts open file(s) changed on disk but have unsaved edits here; they were left as they are.", isError = true)
         }
     }
 

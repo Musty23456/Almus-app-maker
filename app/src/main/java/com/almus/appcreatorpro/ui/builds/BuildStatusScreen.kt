@@ -78,6 +78,8 @@ fun BuildStatusScreen(
     onOpenHistory: () -> Unit,
     onOpenGitHub: () -> Unit = {},
     onOpenBuild: (String) -> Unit = {},
+    /** Phase 8: open the error analysis for (projectId, buildId). */
+    onAnalyze: (String, String) -> Unit = { _, _ -> },
     viewModel: BuildStatusViewModel = viewModel(
         key = "build-$buildId",
         factory = AppViewModelProvider.buildStatusFactory(buildId),
@@ -87,6 +89,7 @@ fun BuildStatusScreen(
     val snackbar = remember { SnackbarHostState() }
     val retry by viewModel.retry.collectAsStateWithLifecycle()
     val export by viewModel.export.collectAsStateWithLifecycle()
+    val cancelResult by viewModel.cancel.collectAsStateWithLifecycle()
 
     // Coming back to the screen (for example after reconnecting GitHub) checks GitHub again.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
@@ -100,6 +103,19 @@ fun BuildStatusScreen(
             is RetryUi.Failed -> {
                 snackbar.showSnackbar(r.message)
                 viewModel.clearRetry()
+            }
+            else -> Unit
+        }
+    }
+    LaunchedEffect(cancelResult) {
+        when (val c = cancelResult) {
+            is CancelUi.Sent -> {
+                snackbar.showSnackbar(c.message)
+                viewModel.clearCancel()
+            }
+            is CancelUi.Failed -> {
+                snackbar.showSnackbar(c.message)
+                viewModel.clearCancel()
             }
             else -> Unit
         }
@@ -135,7 +151,7 @@ fun BuildStatusScreen(
             when (val s = state) {
                 BuildStatusState.Loading -> LoadingView(message = "Loading build...")
                 BuildStatusState.NotFound -> BodyText("This build is not in the history.", modifier = Modifier.padding(16.dp))
-                is BuildStatusState.Found -> StatusContent(s.record, s.polling, viewModel, snackbar, onOpenGitHub)
+                is BuildStatusState.Found -> StatusContent(s.record, s.polling, viewModel, snackbar, onOpenGitHub, onAnalyze)
             }
         }
     }
@@ -148,6 +164,7 @@ private fun StatusContent(
     vm: BuildStatusViewModel,
     snackbar: SnackbarHostState,
     onOpenGitHub: () -> Unit,
+    onAnalyze: (String, String) -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
     val clipboard = LocalClipboardManager.current
@@ -155,6 +172,7 @@ private fun StatusContent(
     val details by vm.details.collectAsStateWithLifecycle()
     val log by vm.log.collectAsStateWithLifecycle()
     val retry by vm.retry.collectAsStateWithLifecycle()
+    val cancelState by vm.cancel.collectAsStateWithLifecycle()
     val downloads by vm.downloadStates.collectAsStateWithLifecycle()
     val saved by vm.savedApks.collectAsStateWithLifecycle()
     val needsReconnect by vm.needsReconnect.collectAsStateWithLifecycle()
@@ -169,7 +187,7 @@ private fun StatusContent(
     }
 
     var pendingExport by remember { mutableStateOf<StoredApk?>(null) }
-    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(ApkActions.APK_MIME)) { uri ->
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(ApkActions.GENERIC_MIME)) { uri ->
         val apk = pendingExport
         pendingExport = null
         if (uri != null && apk != null) vm.exportApk(apk) { context.contentResolver.openOutputStream(uri) }
@@ -198,6 +216,21 @@ private fun StatusContent(
             }
             if (!record.status.isTerminal && polling) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             record.detail?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
+            if (!record.status.isTerminal) {
+                OutlinedButton(
+                    onClick = vm::cancelBuild,
+                    enabled = cancelState !is CancelUi.Sending && !record.cancelRequested && !needsReconnect,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        when {
+                            cancelState is CancelUi.Sending -> "Sending..."
+                            record.cancelRequested -> "Cancel requested"
+                            else -> "Cancel build"
+                        },
+                    )
+                }
+            }
             if (record.status == BuildStatus.SUCCESS) BodyText("GitHub Actions confirmed this build succeeded.")
             if (!record.status.isTerminal && polling) BodyText("Checking GitHub automatically every few seconds. It stops when the build finishes.")
         }
@@ -243,6 +276,14 @@ private fun StatusContent(
         // ---------------------------------------------------------------- details
         SectionCard("Details") {
             BodyText("Build ID: ${record.id}")
+            BodyText("Build type: ${(record.configuration ?: com.almus.appcreatorpro.domain.build.BuildConfiguration.DEFAULT).shortLabel()}")
+            record.configuration?.takeIf { it.hasOverrides }?.let { c ->
+                c.applicationId?.let { BodyText("Application ID: $it") }
+                c.versionName?.let { BodyText("Version name: $it") }
+                c.versionCode?.let { BodyText("Version code: $it") }
+                c.minSdk?.let { BodyText("Minimum SDK: $it") }
+                c.targetSdk?.let { BodyText("Target SDK: $it") }
+            }
             record.repoFullName?.let { BodyText("Repository: $it") }
             record.branch?.let { BodyText("Branch: $it") }
             record.projectDir?.let { BodyText("Folder: $it") }
@@ -261,6 +302,12 @@ private fun StatusContent(
 
         // ---------------------------------------------------------------- logs and errors
         if (record.status.isTerminal && record.runId != null) {
+            val analyzeProjectId = record.projectId
+            if (analyzeProjectId != null && !record.isSample) {
+                Button(onClick = { onAnalyze(analyzeProjectId, record.id) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Analyze errors")
+                }
+            }
             LogCard(
                 record = record,
                 logUi = log,
@@ -280,7 +327,7 @@ private fun StatusContent(
 
         // ---------------------------------------------------------------- artifacts and APKs
         if (record.status == BuildStatus.SUCCESS || artifacts.isNotEmpty()) {
-            SectionCard("APK and artifacts", tone = if (artifacts.any { it.isApk && it.effectiveStatus(nowMillis) == ArtifactStatus.AVAILABLE }) CardTone.Success else CardTone.Normal) {
+            SectionCard("APK and artifacts", tone = if (artifacts.any { it.isDeliverable && it.effectiveStatus(nowMillis) == ArtifactStatus.AVAILABLE }) CardTone.Success else CardTone.Normal) {
                 loadedDetails?.artifactsNote?.let { BodyText(it) }
                 if (artifacts.isEmpty()) {
                     BodyText(
@@ -465,8 +512,8 @@ private fun ArtifactRow(
                 ArtifactStatus.DELETED -> "Deleted on GitHub, it can no longer be downloaded"
             },
         )
-        if (!artifact.isApk) {
-            BodyText("Build log archive (not an APK). Read the log above or open the run on GitHub.")
+        if (!artifact.isDeliverable) {
+            BodyText("Build log archive (not an APK or AAB). Read the log above or open the run on GitHub.")
             return@Column
         }
         when (state) {
@@ -497,7 +544,7 @@ private fun ArtifactRow(
                 if (state is DownloadState.Finished) BodyText("Downloaded and verified.")
                 if (status == ArtifactStatus.AVAILABLE) {
                     Button(onClick = onDownload, enabled = !needsReconnect) {
-                        Text(if (hasSavedCopy || state is DownloadState.Finished) "Download again" else "Download APK")
+                        Text(if (hasSavedCopy || state is DownloadState.Finished) "Download again" else if (artifact.isBundle) "Download AAB" else "Download APK")
                     }
                     if (needsReconnect) BodyText("Reconnect GitHub to download.")
                 }

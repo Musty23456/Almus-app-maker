@@ -63,6 +63,14 @@ sealed interface RetryUi {
     data class Failed(val message: String) : RetryUi
 }
 
+/** Phase 6: result of asking GitHub to cancel the build. */
+sealed interface CancelUi {
+    data object Idle : CancelUi
+    data object Sending : CancelUi
+    data class Sent(val message: String) : CancelUi
+    data class Failed(val message: String) : CancelUi
+}
+
 /** One-shot result of copying an APK to a place the user chose. */
 sealed interface ExportUi {
     data object Idle : ExportUi
@@ -101,6 +109,9 @@ class BuildStatusViewModel(
 
     private val _retry = MutableStateFlow<RetryUi>(RetryUi.Idle)
     val retry: StateFlow<RetryUi> = _retry.asStateFlow()
+
+    private val _cancel = MutableStateFlow<CancelUi>(CancelUi.Idle)
+    val cancel: StateFlow<CancelUi> = _cancel.asStateFlow()
 
     private val _export = MutableStateFlow<ExportUi>(ExportUi.Idle)
     val export: StateFlow<ExportUi> = _export.asStateFlow()
@@ -279,6 +290,33 @@ class BuildStatusViewModel(
 
     fun clearRetry() {
         _retry.value = RetryUi.Idle
+    }
+
+    // ------------------------------------------------------------------ cancel (Phase 6)
+
+    /** Asks GitHub to cancel this build. Ignored while a request is being sent or when the build has finished. */
+    fun cancelBuild() {
+        val service = buildService ?: return
+        if (_cancel.value is CancelUi.Sending) return
+        val record = (state.value as? BuildStatusState.Found)?.record ?: return
+        if (record.status.isTerminal) return
+        _cancel.value = CancelUi.Sending
+        viewModelScope.launch {
+            _cancel.value = try {
+                service.cancelBuild(record).fold(
+                    onSuccess = { CancelUi.Sent(it) },
+                    onFailure = { CancelUi.Failed(it.message ?: "The build could not be cancelled.") },
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                CancelUi.Failed("The build could not be cancelled.")
+            }
+        }
+    }
+
+    fun clearCancel() {
+        _cancel.value = CancelUi.Idle
     }
 
     fun nowMillis(): Long = now()

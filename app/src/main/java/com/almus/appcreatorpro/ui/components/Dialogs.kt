@@ -102,3 +102,15 @@ fun UnsavedChangesDialog(
         },
     )
 }
+
+/** Phase 7: opens this app's notification page in the Android settings (the only place that can unblock them). */
+fun openAppNotificationSettings(context: android.content.Context) {
+    val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(intent)
+    } catch (e: android.content.ActivityNotFoundException) {
+        // No settings screen to open: nothing else can be done from here.
+    }
+}

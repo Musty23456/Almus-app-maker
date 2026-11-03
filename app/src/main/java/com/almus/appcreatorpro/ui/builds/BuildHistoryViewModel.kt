@@ -99,11 +99,11 @@ class BuildHistoryViewModel(
 
     /** Which downloadable artifact (if any) the history card should offer for [record]. */
     fun downloadableArtifact(record: BuildRecord): BuildArtifactInfo? =
-        record.artifacts.firstOrNull { it.isApk && it.effectiveStatus(now()) == ArtifactStatus.AVAILABLE }
+        record.artifacts.firstOrNull { it.isDeliverable && it.effectiveStatus(now()) == ArtifactStatus.AVAILABLE }
 
     fun availability(record: BuildRecord): ApkAvailability {
         if (record.id in _savedBuildIds.value) return ApkAvailability.ON_PHONE
-        val apks = record.artifacts.filter { it.isApk }
+        val apks = record.artifacts.filter { it.isDeliverable }
         return when {
             apks.any { it.effectiveStatus(now()) == ArtifactStatus.AVAILABLE } -> ApkAvailability.DOWNLOADABLE
             apks.any { it.effectiveStatus(now()) == ArtifactStatus.EXPIRED } -> ApkAvailability.EXPIRED
@@ -130,7 +130,7 @@ class BuildHistoryViewModel(
     }
 
     fun cancelDownload(record: BuildRecord) {
-        val artifact = record.artifacts.firstOrNull { it.isApk } ?: return
+        val artifact = record.artifacts.firstOrNull { it.isDeliverable } ?: return
         downloads?.cancel(DownloadKey(record.id, artifact.id))
     }
 

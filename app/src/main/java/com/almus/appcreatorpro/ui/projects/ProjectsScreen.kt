@@ -1,6 +1,11 @@
 package com.almus.appcreatorpro.ui.projects
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,6 +17,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -47,6 +55,10 @@ import com.almus.appcreatorpro.ui.components.ErrorView
 import com.almus.appcreatorpro.ui.components.LoadingView
 import com.almus.appcreatorpro.ui.components.ProjectCard
 import com.almus.appcreatorpro.ui.components.TextInputDialog
+import com.almus.appcreatorpro.domain.transfer.ProjectSort
+import com.almus.appcreatorpro.ui.transfer.ProjectTransferViewModel
+import com.almus.appcreatorpro.ui.transfer.TransferOpState
+import com.almus.appcreatorpro.ui.transfer.TransferProgressDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,11 +66,27 @@ fun ProjectsScreen(
     onOpenProject: (String) -> Unit,
     onCloudBuild: (String) -> Unit,
     bottomBar: @Composable () -> Unit,
+    onImport: () -> Unit = {},
+    /** Null = backups of all projects. */
+    onBackups: (String?) -> Unit = {},
+    onGenerateWithAi: () -> Unit = {},
     viewModel: ProjectsViewModel = viewModel(factory = AppViewModelProvider.Factory),
+    transferViewModel: ProjectTransferViewModel = viewModel(factory = AppViewModelProvider.Factory),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val issues by viewModel.loadIssues.collectAsStateWithLifecycle()
+    val visible by viewModel.visibleProjects.collectAsStateWithLifecycle()
+    val recent by viewModel.recentProjects.collectAsStateWithLifecycle()
+    val query by viewModel.query.collectAsStateWithLifecycle()
+    val sort by viewModel.sort.collectAsStateWithLifecycle()
+    val transferState by transferViewModel.state.collectAsStateWithLifecycle()
+    val transferMessage by transferViewModel.message.collectAsStateWithLifecycle()
+    var topMenuOpen by remember { mutableStateOf(false) }
+    // "Save as" dialog of the system file picker: needs no storage permission.
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        transferViewModel.completeExport(uri?.toString())
+    }
     val snackbarHostState = remember { SnackbarHostState() }
     var showCreateDialog by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<Project?>(null) }
@@ -71,9 +99,31 @@ fun ProjectsScreen(
             viewModel.consumeMessage()
         }
     }
+    LaunchedEffect(transferMessage) {
+        transferMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            transferViewModel.consumeMessage()
+        }
+    }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Projects") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Projects") },
+                actions = {
+                    TextButton(onClick = onGenerateWithAi) { Text("AI") }
+                    TextButton(onClick = onImport) { Text("Import") }
+                    Box {
+                        IconButton(onClick = { topMenuOpen = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "More")
+                        }
+                        DropdownMenu(expanded = topMenuOpen, onDismissRequest = { topMenuOpen = false }) {
+                            DropdownMenuItem(text = { Text("All backups") }, onClick = { topMenuOpen = false; onBackups(null) })
+                        }
+                    }
+                },
+            )
+        },
         bottomBar = bottomBar,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
@@ -101,6 +151,30 @@ fun ProjectsScreen(
                         if (issues.isNotEmpty() && !hideIssues) {
                             item { IssuesBanner(issues = issues, onHide = { hideIssues = true }) }
                         }
+                        if (current.data.isNotEmpty()) {
+                            item {
+                                SearchAndSortBar(
+                                    query = query,
+                                    sort = sort,
+                                    onQueryChange = viewModel::onQueryChange,
+                                    onSortChange = viewModel::onSortChange,
+                                )
+                            }
+                            if (query.isBlank() && recent.isNotEmpty()) {
+                                item {
+                                    RecentRow(recent = recent, onOpen = onOpenProject)
+                                }
+                            }
+                            if (visible.isEmpty()) {
+                                item {
+                                    Text(
+                                        text = "No projects match \"$query\".",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
                         if (current.data.isEmpty()) {
                             item {
                                 EmptyView(
@@ -112,8 +186,8 @@ fun ProjectsScreen(
                                 )
                             }
                         }
-                        items(current.data.size) { index ->
-                            val project = current.data[index]
+                        items(visible.size) { index ->
+                            val project = visible[index]
                             ProjectCard(
                                 project = project,
                                 nowMillis = now,
@@ -124,6 +198,9 @@ fun ProjectsScreen(
                                         onCloudBuild = { onCloudBuild(project.id) },
                                         onRename = { renameTarget = project },
                                         onDelete = { deleteTarget = project },
+                                        onExport = { exportLauncher.launch(transferViewModel.beginExport(project)) },
+                                        onBackupNow = { transferViewModel.backupNow(project) },
+                                        onBackups = { onBackups(project.id) },
                                     )
                                 },
                             )
@@ -132,6 +209,10 @@ fun ProjectsScreen(
                 }
             }
         }
+    }
+
+    (transferState as? TransferOpState.Running)?.let { running ->
+        TransferProgressDialog(title = running.title, progress = running.progress, onCancel = transferViewModel::cancel)
     }
 
     if (showCreateDialog) {
@@ -177,7 +258,15 @@ fun ProjectsScreen(
 }
 
 @Composable
-private fun ProjectMenu(onOpen: () -> Unit, onCloudBuild: () -> Unit, onRename: () -> Unit, onDelete: () -> Unit) {
+private fun ProjectMenu(
+    onOpen: () -> Unit,
+    onCloudBuild: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+    onExport: () -> Unit,
+    onBackupNow: () -> Unit,
+    onBackups: () -> Unit,
+) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { expanded = true }) {
@@ -187,6 +276,9 @@ private fun ProjectMenu(onOpen: () -> Unit, onCloudBuild: () -> Unit, onRename: 
             DropdownMenuItem(text = { Text("Open") }, onClick = { expanded = false; onOpen() })
             DropdownMenuItem(text = { Text("Cloud build") }, onClick = { expanded = false; onCloudBuild() })
             DropdownMenuItem(text = { Text("Rename") }, onClick = { expanded = false; onRename() })
+            DropdownMenuItem(text = { Text("Export as ZIP") }, onClick = { expanded = false; onExport() })
+            DropdownMenuItem(text = { Text("Back up now") }, onClick = { expanded = false; onBackupNow() })
+            DropdownMenuItem(text = { Text("Backups") }, onClick = { expanded = false; onBackups() })
             DropdownMenuItem(text = { Text("Delete") }, onClick = { expanded = false; onDelete() })
         }
     }
@@ -217,6 +309,49 @@ private fun IssuesBanner(issues: List<String>, onHide: () -> Unit) {
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
             TextButton(onClick = onHide) { Text("Hide") }
+        }
+    }
+}
+
+@Composable
+private fun SearchAndSortBar(
+    query: String,
+    sort: ProjectSort,
+    onQueryChange: (String) -> Unit,
+    onSortChange: (ProjectSort) -> Unit,
+) {
+    var sortMenuOpen by remember { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            label = { Text("Search projects") },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Box {
+            TextButton(onClick = { sortMenuOpen = true }) { Text("Sort: ${sort.label}") }
+            DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
+                ProjectSort.entries.forEach { option ->
+                    DropdownMenuItem(text = { Text(option.label) }, onClick = { sortMenuOpen = false; onSortChange(option) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentRow(recent: List<Project>, onOpen: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Recently opened", style = MaterialTheme.typography.titleSmall)
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            recent.forEach { project ->
+                OutlinedButton(onClick = { onOpen(project.id) }) { Text(project.name, maxLines = 1) }
+            }
         }
     }
 }

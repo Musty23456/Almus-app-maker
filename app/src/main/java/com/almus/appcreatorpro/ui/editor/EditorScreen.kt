@@ -72,6 +72,12 @@ private sealed interface EditorDialog {
 fun EditorScreen(
     projectId: String,
     onBack: () -> Unit,
+    /** Phase 8: open this file and jump to this position (from the error dashboard). */
+    initialPath: String? = null,
+    initialLine: Int? = null,
+    initialColumn: Int? = null,
+    onOpenDebug: () -> Unit = {},
+    onOpenAi: () -> Unit = {},
 ) {
     val viewModel: EditorViewModel = viewModel(
         key = "editor-$projectId",
@@ -93,6 +99,13 @@ fun EditorScreen(
             viewModel.consumeMessage()
         }
     }
+
+    LaunchedEffect(initialPath, initialLine, initialColumn) {
+        if (!initialPath.isNullOrBlank()) viewModel.openAt(initialPath, initialLine, initialColumn)
+    }
+
+    // Phase 8: fixes applied on the debug screen change files on disk.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resyncFromDisk() }
 
     // Safety net: whenever the app leaves the screen (home button, app switch, screen off) save work in progress.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.saveAll() }
@@ -187,6 +200,22 @@ fun EditorScreen(
                                     text = { Text("Save all") },
                                     enabled = state.hasUnsavedChanges,
                                     onClick = { menuOpen = false; viewModel.saveAll(silent = false) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("AI assistant") },
+                                    onClick = {
+                                        menuOpen = false
+                                        // Save first so the assistant sees what is on screen.
+                                        viewModel.saveAll { ok -> if (ok) onOpenAi() }
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Check code & errors") },
+                                    onClick = {
+                                        menuOpen = false
+                                        // Save first so the checks see what is on screen.
+                                        viewModel.saveAll { ok -> if (ok) onOpenDebug() }
+                                    },
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Rename project") },

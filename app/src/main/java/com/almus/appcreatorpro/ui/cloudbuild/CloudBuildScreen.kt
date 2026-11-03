@@ -56,6 +56,7 @@ fun CloudBuildScreen(
     onChooseRepository: (String) -> Unit,
     onOpenBuild: (String) -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenBuildConfig: (String) -> Unit = {},
     viewModel: CloudBuildViewModel = viewModel(
         key = "cloudbuild-$projectId",
         factory = AppViewModelProvider.cloudBuildFactory(projectId),
@@ -125,6 +126,16 @@ fun CloudBuildScreen(
                         OutlinedButton(onClick = { onChooseRepository(projectId) }, enabled = state.connected) {
                             Text(if (config == null) "Choose repository" else "Change repository or branch")
                         }
+                    }
+
+                    SectionCard("Build type", tone = if (state.buildConfigErrors.isEmpty()) CardTone.Normal else CardTone.Error) {
+                        val bc = state.buildConfig
+                        Text(bc.shortLabel(), style = MaterialTheme.typography.bodyLarge)
+                        BodyText(
+                            if (bc.hasOverrides) "With your own application ID, version or SDK settings." else "Using the values from the project.",
+                        )
+                        state.buildConfigErrors.forEach { Text(it, color = MaterialTheme.colorScheme.error) }
+                        OutlinedButton(onClick = { onOpenBuildConfig(projectId) }) { Text("Build configuration") }
                     }
 
                     SectionCard("3. Build settings") {
@@ -213,6 +224,7 @@ private fun PreflightCard(result: PreflightResult) {
                     WorkflowCheck.MISSING -> "missing"
                     WorkflowCheck.OUTDATED -> "outdated"
                     WorkflowCheck.NOT_ON_DEFAULT_BRANCH -> "missing on the default branch"
+                    WorkflowCheck.LEGACY -> "older version (debug APK builds only)"
                 },
             )
         }

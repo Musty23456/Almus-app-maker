@@ -117,7 +117,7 @@ fun BuildHistoryScreen(
                                             HistoryApkLine(
                                                 build = build,
                                                 availability = availability,
-                                                state = build.artifacts.firstOrNull { it.isApk }?.let { downloads[DownloadKey(build.id, it.id)] },
+                                                state = build.artifacts.firstOrNull { it.isDeliverable }?.let { downloads[DownloadKey(build.id, it.id)] },
                                                 onDownload = { viewModel.download(build) },
                                                 onCancel = { viewModel.cancelDownload(build) },
                                                 onOpen = { onOpenBuild(build.id) },
