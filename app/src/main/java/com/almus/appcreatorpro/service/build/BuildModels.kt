@@ -93,3 +93,30 @@ internal object BuildDetailsSupport {
     fun pickLogJob(jobs: List<WorkflowJob>): WorkflowJob? =
         jobs.firstOrNull { it.conclusion == "failure" } ?: jobs.lastOrNull()
 }
+
+/** The result of ONE status check of one build ([CloudBuildOrchestrator.syncOnce]). Nothing here is ever a secret. */
+sealed interface SyncOutcome {
+    /** Nothing to check: the build is missing, a sample, or already finished. */
+    data object Skipped : SyncOutcome
+
+    /** GitHub was asked and nothing changed. */
+    data object Unchanged : SyncOutcome
+
+    /** The record changed but the build is still going. */
+    data class Progressed(val record: BuildRecord) : SyncOutcome
+
+    /** The build reached a final state; [record] is the saved final record. */
+    data class Finished(val record: BuildRecord) : SyncOutcome
+
+    /** Checking was given up on (too old, run unknown to GitHub, no run appeared). The reason is on the record. */
+    data class Stopped(val record: BuildRecord) : SyncOutcome
+
+    /** The GitHub sign-in is no longer valid. Checking is stopped until the user reconnects. */
+    data class AuthProblem(val record: BuildRecord) : SyncOutcome
+
+    /** GitHub's rate limit was hit; nothing was changed. [retryAtMillis] is when it resets, if GitHub said so. */
+    data class RateLimited(val retryAtMillis: Long?) : SyncOutcome
+
+    /** Network or server trouble; nothing was changed, so the check can simply be repeated. */
+    data class TransientError(val message: String) : SyncOutcome
+}

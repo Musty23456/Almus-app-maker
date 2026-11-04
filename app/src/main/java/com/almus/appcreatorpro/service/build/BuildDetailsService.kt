@@ -4,7 +4,7 @@ import com.almus.appcreatorpro.domain.github.GitHubApi
 import com.almus.appcreatorpro.domain.github.GitHubException
 import com.almus.appcreatorpro.domain.github.GradleErrors
 import com.almus.appcreatorpro.domain.github.WorkflowJob
-import com.almus.appcreatorpro.domain.github.toInfo
+import com.almus.appcreatorpro.domain.github.toVisibleInfos
 import com.almus.appcreatorpro.domain.model.ArtifactStatus
 import com.almus.appcreatorpro.domain.model.BuildArtifactInfo
 import com.almus.appcreatorpro.domain.model.BuildRecord
@@ -44,7 +44,7 @@ class BuildDetailsService(
         var artifactsNote: String? = null
         var artifactsError: GitHubException? = null
         try {
-            val fresh = api.listArtifacts(owner, repo, runId).map { it.toInfo() }
+            val fresh = api.listArtifacts(owner, repo, runId).toVisibleInfos()
             artifacts = fresh
             rememberArtifacts(record, fresh)
         } catch (e: CancellationException) {

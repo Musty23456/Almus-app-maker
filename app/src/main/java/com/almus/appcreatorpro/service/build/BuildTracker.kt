@@ -1,6 +1,8 @@
 package com.almus.appcreatorpro.service.build
 
+import com.almus.appcreatorpro.domain.build.BuildConfiguration
 import com.almus.appcreatorpro.domain.github.CloudBuildConfig
+import com.almus.appcreatorpro.domain.model.BuildRecord
 import com.almus.appcreatorpro.domain.model.Project
 import com.almus.appcreatorpro.domain.repository.BuildStore
 import kotlinx.coroutines.CancellationException
@@ -13,6 +15,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/** What the background monitor and the dashboard need from the in-app tracker. */
+interface BuildFollower {
+    /** Ids of the builds that are being followed live in this process. */
+    val activeBuildIds: StateFlow<Set<String>>
+
+    /** Starts following [buildId]; does nothing if it is already followed. */
+    fun track(buildId: String)
+}
+
 /**
  * Keeps following builds in an app-wide [scope], so a build keeps being tracked while the user moves between
  * screens. At most one tracking job runs per build.
@@ -22,23 +33,27 @@ class BuildTracker(
     private val builds: BuildStore,
     private val scope: CoroutineScope,
     private val now: () -> Long = System::currentTimeMillis,
-) {
+) : BuildFollower {
     private val lock = Any()
     private val jobs = HashMap<String, Job>()
     private val _activeBuildIds = MutableStateFlow<Set<String>>(emptySet())
 
     /** Ids of the builds that are being followed right now. */
-    val activeBuildIds: StateFlow<Set<String>> = _activeBuildIds.asStateFlow()
+    override val activeBuildIds: StateFlow<Set<String>> = _activeBuildIds.asStateFlow()
 
     /** Uploads the project and starts the build, then follows it in the background. */
-    suspend fun startBuild(project: Project, config: CloudBuildConfig): StartResult {
-        val result = orchestrator.start(project, config)
+    suspend fun startBuild(
+        project: Project,
+        config: CloudBuildConfig,
+        buildConfig: BuildConfiguration = BuildConfiguration.DEFAULT,
+    ): StartResult {
+        val result = orchestrator.start(project, config, buildConfig)
         if (result is StartResult.Started) track(result.record.id)
         return result
     }
 
     /** Starts following [buildId] (also resumes a build whose checking had stopped). Does nothing if already followed. */
-    fun track(buildId: String) {
+    override fun track(buildId: String) {
         synchronized(lock) {
             if (jobs[buildId]?.isActive == true) return
             _activeBuildIds.update { it + buildId }
@@ -60,6 +75,13 @@ class BuildTracker(
             jobs[buildId] = job
             job.start()
         }
+    }
+
+    /** Asks GitHub to cancel [record]'s run, then keeps following it so the real end is recorded. Returns a user-safe message. */
+    suspend fun cancel(record: BuildRecord): String {
+        val message = orchestrator.cancel(record)
+        track(record.id)
+        return message
     }
 
     /**

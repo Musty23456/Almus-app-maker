@@ -1,6 +1,8 @@
 package com.almus.appcreatorpro.service.build
 
+import com.almus.appcreatorpro.data.repository.BuildConfigurationStore
 import com.almus.appcreatorpro.data.repository.CloudBuildConfigStore
+import com.almus.appcreatorpro.domain.build.BuildConfiguration
 import com.almus.appcreatorpro.domain.error.FeatureNotImplementedException
 import com.almus.appcreatorpro.domain.github.CloudBuildConfig
 import com.almus.appcreatorpro.domain.github.CloudBuildNotReadyException
@@ -21,6 +23,10 @@ interface BuildService {
     /** Builds the project of [record] again with its current files. */
     suspend fun retryBuild(record: BuildRecord): Result<BuildRecord> =
         Result.failure(FeatureNotImplementedException("Retrying a build"))
+
+    /** Asks GitHub to cancel the run of [record]. On success the text says what happened. */
+    suspend fun cancelBuild(record: BuildRecord): Result<String> =
+        Result.failure(FeatureNotImplementedException("Cancelling a build"))
 }
 
 /** The Phase 1 placeholder: it is honest about not being able to build anything. */
@@ -38,6 +44,8 @@ class GitHubActionsBuildService(
     private val configs: CloudBuildConfigStore,
     private val tracker: BuildTracker,
     private val projects: ProjectRepository,
+    /** Phase 6: the build type and overrides chosen per project. Null means plain debug builds. */
+    private val buildConfigs: BuildConfigurationStore? = null,
 ) : BuildService {
 
     override val displayName: String = "GitHub Actions"
@@ -55,7 +63,7 @@ class GitHubActionsBuildService(
                 "Choose a GitHub repository for \"${project.name}\" first: open the project and use Cloud build.",
             )
         }
-        start(project, config)
+        start(project, config, buildConfigs?.get(project.id) ?: BuildConfiguration.DEFAULT)
     }
 
     override suspend fun retryBuild(record: BuildRecord): Result<BuildRecord> = attempt {
@@ -81,7 +89,14 @@ class GitHubActionsBuildService(
                 projectDir = directory,
                 gradleVersion = gradle,
             ),
+            // The same settings as the first attempt: what was asked for is kept on the record.
+            record.configuration ?: BuildConfiguration.DEFAULT,
         )
+    }
+
+    override suspend fun cancelBuild(record: BuildRecord): Result<String> = attempt {
+        requireConnected()
+        tracker.cancel(record)
     }
 
     private suspend fun requireConnected() {
@@ -94,8 +109,8 @@ class GitHubActionsBuildService(
         }
     }
 
-    private suspend fun start(project: Project, config: CloudBuildConfig): BuildRecord =
-        when (val result = tracker.startBuild(project, config)) {
+    private suspend fun start(project: Project, config: CloudBuildConfig, buildConfig: BuildConfiguration): BuildRecord =
+        when (val result = tracker.startBuild(project, config, buildConfig)) {
             is StartResult.Started -> result.record
             is StartResult.Rejected -> throw CloudBuildNotReadyException(
                 result.reasons.take(3).joinToString(" ").ifBlank { "The build cannot start yet." },
