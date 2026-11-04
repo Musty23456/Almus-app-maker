@@ -25,3 +25,9 @@ declaration, brackets balance, and the workflow was checked against the Reposito
 - BuildDetailsService.loadRawLog added (used by DebugHub).
 - ProjectPathResolver: the file exists in this zip at app/src/main/java/com/almus/appcreatorpro/debug/ProjectPathResolver.kt;
   CI said it is unresolved, so it was probably not uploaded to the repository. Check that it is there.
+
+## Round 3
+- Test sources: removed ';' and ':' from backticked test names (illegal on the JVM); CloudBuildViewModel parameter order so a trailing lambda binds to workflowTemplate.
+
+## Round 4
+- Compared the re-uploaded zip with this project: it had the old workflow v1 and lacked round-3 fixes; this zip is the complete, current state. KeystoreGenerator.kt is at app/src/main/java/com/almus/appcreatorpro/service/signing/.

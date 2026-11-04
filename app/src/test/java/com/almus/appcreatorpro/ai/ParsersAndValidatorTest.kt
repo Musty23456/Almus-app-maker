@@ -11,7 +11,7 @@ class ParsersAndValidatorTest {
     private fun bad(p: Parsed<*>): String = (p as? Parsed.Bad)?.reason ?: error("expected Bad but was $p")
 
     // ---- JSON extraction
-    @Test fun `json is found plain, fenced or surrounded by text; garbage and truncation are explained`() {
+    @Test fun `json is found plain, fenced or surrounded by text, garbage and truncation are explained`() {
         assertTrue(AiJson.parseObject("{\"a\":1}", false) is Parsed.Ok)
         assertTrue(AiJson.parseObject("Here you go:\n```json\n{\"a\":1}\n```\nBye", false) is Parsed.Ok)
         assertTrue(AiJson.parseObject("text {\"a\":1} text", false) is Parsed.Ok)
@@ -87,7 +87,7 @@ class ParsersAndValidatorTest {
         assertTrue(r.accepted.isEmpty()); assertTrue(r.hasBlockingProblems)
     }
 
-    @Test fun `warnings: placeholder, package mismatch, missing manifest and gradle files`() {
+    @Test fun `warnings for placeholder, package mismatch, missing manifest and gradle files`() {
         val r = GeneratedFileValidator.validate(listOf(
             gf("app/src/main/java/com/example/notes/A.kt", "package com.other\n\nclass A {\n    // ...\n}\n"),
             gf("app/src/main/java/com/example/notes/B.kt", "class B"),
