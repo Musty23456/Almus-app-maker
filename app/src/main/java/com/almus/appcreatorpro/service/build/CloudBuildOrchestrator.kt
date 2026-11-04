@@ -114,8 +114,9 @@ class CloudBuildOrchestrator(
                 workflow = check
                 workflowVersion = found.version
                 when (check) {
-                    WorkflowCheck.OK -> {
-                        if (buildConfig.needsAdvancedWorkflow && found.version < 2) {
+                    WorkflowCheck.OK -> Unit
+                    WorkflowCheck.LEGACY -> {
+                        if (buildConfig.needsAdvancedWorkflow) {
                             blockers += "This build type or these settings need the newer workflow file (version 2), but this repository has " +
                                 "version ${found.version}. Copy the current workflow from the app, commit it to \"${config.branch}\" and to the " +
                                 "default branch, then try again."
@@ -174,7 +175,8 @@ class CloudBuildOrchestrator(
         ) {
             return WorkflowFacts(WorkflowCheck.OUTDATED, 0)
         }
-        return WorkflowFacts(WorkflowCheck.OK, minOf(branchVersion, defaultVersion))
+        val version = minOf(branchVersion, defaultVersion)
+        return WorkflowFacts(if (version < CloudBuildConfig.WORKFLOW_VERSION) WorkflowCheck.LEGACY else WorkflowCheck.OK, version)
     }
 
     private suspend fun readProject(projectId: String): Map<String, String> {

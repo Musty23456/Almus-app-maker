@@ -18,3 +18,10 @@ files import it. The service/build layer was also still the Phase 5 version, so 
 No Kotlin compiler / Gradle / network was available here, so NOTHING was compiled or run. Checked: every project import resolves to a
 declaration, brackets balance, and the workflow was checked against the RepositoryGuardsTest rules with a script. Push and let
 "Android Build" run; expect possible further compile errors (the earlier phases were never compiled either).
+
+## Round 2 (CI run #15)
+- SigningStore.parse: block body (returns inside expression body are illegal).
+- WorkflowCheck.LEGACY added (workflow version 1: debug APK only); orchestrator + CloudBuildScreen consistent.
+- BuildDetailsService.loadRawLog added (used by DebugHub).
+- ProjectPathResolver: the file exists in this zip at app/src/main/java/com/almus/appcreatorpro/debug/ProjectPathResolver.kt;
+  CI said it is unresolved, so it was probably not uploaded to the repository. Check that it is there.

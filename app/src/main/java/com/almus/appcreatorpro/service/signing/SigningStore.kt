@@ -108,7 +108,8 @@ class SigningStore(
         ),
     )
 
-    private fun parse(id: String, text: String): SigningProfile? = try {
+    private fun parse(id: String, text: String): SigningProfile? {
+        return try {
         val o = MiniJson.parseObject(text)
         SigningProfile(
             id = id,
@@ -121,8 +122,9 @@ class SigningStore(
             verifiedOnDevice = o.bool("verifiedOnDevice") ?: true,
             secretsConfirmedFor = o.arr("secretsConfirmedFor").orEmpty().filterIsInstance<String>(),
         )
-    } catch (e: MiniJson.JsonException) {
-        null
+        } catch (e: MiniJson.JsonException) {
+            null
+        }
     }
 
     // java.util.Base64 needs API 26, which is this app's minSdk, and works the same in unit tests.

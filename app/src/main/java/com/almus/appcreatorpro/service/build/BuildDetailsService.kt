@@ -4,6 +4,7 @@ import com.almus.appcreatorpro.domain.github.GitHubApi
 import com.almus.appcreatorpro.domain.github.GitHubException
 import com.almus.appcreatorpro.domain.github.GradleErrors
 import com.almus.appcreatorpro.domain.github.WorkflowJob
+import com.almus.appcreatorpro.debug.RawBuildLog
 import com.almus.appcreatorpro.domain.github.toVisibleInfos
 import com.almus.appcreatorpro.domain.model.ArtifactStatus
 import com.almus.appcreatorpro.domain.model.BuildArtifactInfo
@@ -83,6 +84,12 @@ class BuildDetailsService(
                 log = log,
             ),
         )
+    }
+
+    /** The log for the Debug screens: text or a note saying why there is none. */
+    suspend fun loadRawLog(buildId: String): RawBuildLog {
+        val view = loadLog(buildId)
+        return RawBuildLog(view.text, view.note)
     }
 
     /** The end of the build log (for any build, also successful ones). Never throws except when cancelled. */

@@ -16,8 +16,11 @@ enum class WorkflowCheck {
     /** Not found on the build branch. */
     MISSING,
 
-    /** Found, but without the current version marker. */
+    /** Found, but without a version marker this app knows. */
     OUTDATED,
+
+    /** An older but supported version (1): it builds plain debug APKs only. */
+    LEGACY,
 
     /** On the build branch only: GitHub also needs it on the default branch. */
     NOT_ON_DEFAULT_BRANCH,
