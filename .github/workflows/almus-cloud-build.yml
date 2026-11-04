@@ -1,4 +1,4 @@
-# almus-cloud-build-workflow-version: 1
+# almus-cloud-build-workflow-version: 2
 #
 # Almus App Creator Pro - cloud build workflow for YOUR projects.
 # Add this file to the repository you build in, at .github/workflows/almus-cloud-build.yml
@@ -6,9 +6,12 @@
 #
 # Security design (read this before changing anything):
 #  * It runs only when started by hand (workflow_dispatch) by someone with write access to the repository.
-#  * The job has the smallest possible permissions: it can only READ the repository contents.
-#  * It uses NO secrets. The GitHub token that the Almus app holds lives only on your phone; it is never
-#    sent to this workflow, so a Gradle build script cannot read it.
+#  * The workflow has the smallest possible permissions: it can only READ the repository contents.
+#  * Two jobs. "build" runs YOUR project's Gradle build and can read no secret value at all.
+#    "sign" holds the signing values, runs no project code and does not even check the project out.
+#    The only thing handed from "build" to "sign" is the unsigned file, kept for one day.
+#  * The signing values reach the sign job only through environment variables, never through the command line or a log.
+#  * The GitHub token that the Almus app holds lives only on your phone; it is never sent to this workflow.
 #  * Checkout does not keep the workflow token on disk (persist-credentials: false).
 #  * The Gradle cache is disabled so a build script cannot poison a cache that later builds would trust.
 #  * Every input is validated before use and reaches shell commands only through environment variables.
@@ -33,9 +36,49 @@ on:
         default: "8.9"
         type: string
       gradle_task:
-        description: "Gradle task (only assembleDebug is allowed)"
+        description: "Gradle task: assembleDebug, assembleRelease, bundleDebug or bundleRelease"
         required: false
         default: "assembleDebug"
+        type: string
+      application_id:
+        description: "Override of the application ID (empty keeps the project's value)"
+        required: false
+        default: ""
+        type: string
+      version_name:
+        description: "Override of the version name (empty keeps the project's value)"
+        required: false
+        default: ""
+        type: string
+      version_code:
+        description: "Override of the version code (empty keeps the project's value)"
+        required: false
+        default: ""
+        type: string
+      min_sdk:
+        description: "Override of the minimum SDK (empty keeps the project's value)"
+        required: false
+        default: ""
+        type: string
+      target_sdk:
+        description: "Override of the target SDK (empty keeps the project's value)"
+        required: false
+        default: ""
+        type: string
+      minify:
+        description: "Code shrinking for release: true, false, or empty to keep the project's value"
+        required: false
+        default: ""
+        type: string
+      shrink_resources:
+        description: "Resource shrinking for release: true, false, or empty to keep the project's value"
+        required: false
+        default: ""
+        type: string
+      sign:
+        description: "true to sign the release result with the key stored in this repository"
+        required: false
+        default: "false"
         type: string
 
 permissions:
@@ -47,9 +90,9 @@ concurrency:
 
 jobs:
   build:
-    name: Build debug APK
+    name: Build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Validate inputs
@@ -58,15 +101,32 @@ jobs:
           BUILD_ID: ${{ inputs.build_id }}
           GRADLE_VERSION: ${{ inputs.gradle_version }}
           GRADLE_TASK: ${{ inputs.gradle_task }}
+          APP_ID: ${{ inputs.application_id }}
+          VERSION_NAME: ${{ inputs.version_name }}
+          VERSION_CODE: ${{ inputs.version_code }}
+          MIN_SDK: ${{ inputs.min_sdk }}
+          TARGET_SDK: ${{ inputs.target_sdk }}
+          MINIFY: ${{ inputs.minify }}
+          SHRINK: ${{ inputs.shrink_resources }}
+          SIGN: ${{ inputs.sign }}
         run: |
           set -euo pipefail
           fail() { echo "::error::$1"; exit 1; }
           [[ "$BUILD_ID" =~ ^[a-f0-9]{8,32}$ ]] || fail "build_id must be 8-32 lowercase hex characters."
           [[ "$GRADLE_VERSION" =~ ^[0-9]{1,2}\.[0-9]{1,2}(\.[0-9]{1,2})?$ ]] || fail "gradle_version must look like 8.9 or 8.10.2."
-          [[ "$GRADLE_TASK" == "assembleDebug" ]] || fail "Only the assembleDebug task is allowed."
+          [[ "$GRADLE_TASK" =~ ^(assembleDebug|assembleRelease|bundleDebug|bundleRelease)$ ]] || fail "This Gradle task is not allowed."
           [[ "$PROJECT_DIR" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || fail "project_dir contains characters that are not allowed."
           [[ "$PROJECT_DIR" != *..* ]] || fail "project_dir must not contain '..'."
           [[ "$PROJECT_DIR" != .github* ]] || fail "project_dir must not be inside .github."
+          [[ -z "$APP_ID" || "$APP_ID" =~ ^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$ ]] || fail "application_id is not a valid application ID."
+          [[ -z "$VERSION_NAME" || "$VERSION_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,49}$ ]] || fail "version_name contains characters that are not allowed."
+          [[ -z "$VERSION_CODE" || "$VERSION_CODE" =~ ^[1-9][0-9]{0,9}$ ]] || fail "version_code must be a whole number."
+          [[ -z "$MIN_SDK" || "$MIN_SDK" =~ ^[0-9]{2}$ ]] || fail "min_sdk must be a two-digit number."
+          [[ -z "$TARGET_SDK" || "$TARGET_SDK" =~ ^[0-9]{2}$ ]] || fail "target_sdk must be a two-digit number."
+          [[ -z "$MINIFY" || "$MINIFY" =~ ^(true|false)$ ]] || fail "minify must be true, false or empty."
+          [[ -z "$SHRINK" || "$SHRINK" =~ ^(true|false)$ ]] || fail "shrink_resources must be true, false or empty."
+          [[ "$SIGN" =~ ^(true|false)$ ]] || fail "sign must be true or false."
+          [[ "$SIGN" != "true" || "$GRADLE_TASK" == *Release ]] || fail "Only release builds can be signed."
 
       - name: Check out only the project folder
         uses: actions/checkout@v4
@@ -106,30 +166,101 @@ jobs:
           gradle-version: ${{ inputs.gradle_version }}
           cache-disabled: true
 
-      - name: Build debug APK
+      - name: Build
+        working-directory: ${{ inputs.project_dir }}
+        env:
+          GRADLE_TASK: ${{ inputs.gradle_task }}
+          ALMUS_APP_ID: ${{ inputs.application_id }}
+          ALMUS_VERSION_NAME: ${{ inputs.version_name }}
+          ALMUS_VERSION_CODE: ${{ inputs.version_code }}
+          ALMUS_MIN_SDK: ${{ inputs.min_sdk }}
+          ALMUS_TARGET_SDK: ${{ inputs.target_sdk }}
+          ALMUS_MINIFY: ${{ inputs.minify }}
+          ALMUS_SHRINK: ${{ inputs.shrink_resources }}
+        run: |
+          set -o pipefail
+          INIT="$RUNNER_TEMP/almus-init.gradle"
+          cat > "$INIT" <<'ALMUS_INIT'
+          // Applies the settings chosen in the Almus app. It reads only plain build settings from the environment.
+          def almusEnv = { String name ->
+            def v = System.getenv(name)
+            return (v == null || v.trim().isEmpty()) ? null : v.trim()
+          }
+          allprojects {
+            afterEvaluate { project ->
+              if (!project.plugins.hasPlugin('com.android.application')) return
+              def android = project.extensions.getByName('android')
+              try {
+                def appId = almusEnv('ALMUS_APP_ID')
+                if (appId != null) android.defaultConfig.applicationId = appId
+                def vName = almusEnv('ALMUS_VERSION_NAME')
+                if (vName != null) android.defaultConfig.versionName = vName
+                def vCode = almusEnv('ALMUS_VERSION_CODE')
+                if (vCode != null) android.defaultConfig.versionCode = Integer.parseInt(vCode)
+                def minSdk = almusEnv('ALMUS_MIN_SDK')
+                if (minSdk != null) android.defaultConfig.minSdk = Integer.parseInt(minSdk)
+                def targetSdk = almusEnv('ALMUS_TARGET_SDK')
+                if (targetSdk != null) android.defaultConfig.targetSdk = Integer.parseInt(targetSdk)
+                def minify = almusEnv('ALMUS_MINIFY')
+                if (minify != null) android.buildTypes.release.minifyEnabled = Boolean.parseBoolean(minify)
+                def shrink = almusEnv('ALMUS_SHRINK')
+                if (shrink != null) android.buildTypes.release.shrinkResources = Boolean.parseBoolean(shrink)
+              } catch (Throwable e) {
+                throw new GradleException("Almus could not apply these settings to " + project.path + ": " + e.getMessage())
+              }
+            }
+          }
+          ALMUS_INIT
+          gradle --no-daemon --stacktrace -I "$INIT" "$GRADLE_TASK" 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Find the build output
+        id: found
         working-directory: ${{ inputs.project_dir }}
         env:
           GRADLE_TASK: ${{ inputs.gradle_task }}
         run: |
-          set -o pipefail
-          gradle --no-daemon --stacktrace "$GRADLE_TASK" 2>&1 | tee "$RUNNER_TEMP/build.log"
-
-      - name: Verify APK exists
-        working-directory: ${{ inputs.project_dir }}
-        run: |
           set -euo pipefail
-          APKS=$(find . -path '*/build/outputs/apk/debug/*.apk' -type f)
-          if [ -z "$APKS" ]; then
-            echo "::error::The build finished but no debug APK was produced."
+          if [[ "$GRADLE_TASK" == bundle* ]]; then
+            KIND=aab
+            FILES=$(find . -path '*/build/outputs/bundle/*' -name '*.aab' -type f)
+          else
+            KIND=apk
+            FILES=$(find . -path '*/build/outputs/apk/*' -name '*.apk' -type f)
+          fi
+          if [ -z "$FILES" ]; then
+            echo "::error::The build finished but no $KIND file was produced."
             exit 1
           fi
-          echo "$APKS" | while read -r f; do ls -lh "$f"; done
+          echo "$FILES" | while read -r f; do ls -lh "$f"; done
+          echo "kind=$KIND" >> "$GITHUB_OUTPUT"
 
-      - name: Upload debug APK
+      # Release builds that will be signed: hand the unsigned file to the sign job. Kept for one day only.
+      - name: Upload unsigned hand-over
+        if: ${{ inputs.sign == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: almus-unsigned-${{ inputs.build_id }}
+          path: |
+            ${{ inputs.project_dir }}/**/build/outputs/apk/*/*.apk
+            ${{ inputs.project_dir }}/**/build/outputs/bundle/*/*.aab
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload APK
+        if: ${{ inputs.sign != 'true' && steps.found.outputs.kind == 'apk' }}
         uses: actions/upload-artifact@v4
         with:
           name: almus-apk-${{ inputs.build_id }}
-          path: ${{ inputs.project_dir }}/**/build/outputs/apk/debug/*.apk
+          path: ${{ inputs.project_dir }}/**/build/outputs/apk/*/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload AAB
+        if: ${{ inputs.sign != 'true' && steps.found.outputs.kind == 'aab' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: almus-aab-${{ inputs.build_id }}
+          path: ${{ inputs.project_dir }}/**/build/outputs/bundle/*/*.aab
           if-no-files-found: error
           retention-days: 14
 
@@ -141,3 +272,83 @@ jobs:
           path: ${{ runner.temp }}/build.log
           if-no-files-found: ignore
           retention-days: 7
+
+  sign:
+    name: Sign release
+    needs: build
+    if: ${{ inputs.sign == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Download the unsigned build
+        uses: actions/download-artifact@v4
+        with:
+          name: almus-unsigned-${{ inputs.build_id }}
+          path: ${{ runner.temp }}/in
+
+      - name: Sign
+        id: sign
+        env:
+          KEYSTORE_B64: ${{ secrets.ALMUS_SIGN_KEYSTORE_BASE64 }}
+          STORE_PASS: ${{ secrets.ALMUS_SIGN_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ALMUS_SIGN_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ALMUS_SIGN_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$STORE_PASS" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASS" ]; then
+            fail "Release signing is not set up in this repository. Add the four Almus signing values as repository secrets (see Release signing in the app)."
+          fi
+          KS="$RUNNER_TEMP/almus-release.p12"
+          trap 'rm -f "$KS"' EXIT
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$KS" || fail "The stored keystore is not valid base64."
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)"
+          APKSIGNER="$BT/apksigner"
+          mkdir -p "$RUNNER_TEMP/out"
+          SIGNED=0
+          KIND=""
+          while IFS= read -r f; do
+            base="$(basename "$f")"
+            out="$RUNNER_TEMP/out/$base"
+            case "$f" in
+              *.apk)
+                "$APKSIGNER" sign --ks "$KS" --ks-pass env:STORE_PASS --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASS --out "$out" "$f" || fail "Signing failed at step Sign. Check the alias and the passwords stored as secrets."
+                CERTS="$("$APKSIGNER" verify --print-certs "$out")"
+                KIND=apk
+                ;;
+              *.aab)
+                jarsigner -keystore "$KS" -storetype PKCS12 -storepass:env STORE_PASS -keypass:env KEY_PASS -signedjar "$out" "$f" "$KEY_ALIAS" > /dev/null || fail "Signing failed at step Sign. Check the alias and the passwords stored as secrets."
+                CERTS="$(jarsigner -verify -certs "$out")"
+                KIND=aab
+                ;;
+              *)
+                continue
+                ;;
+            esac
+            if printf '%s' "$CERTS" | grep -q "Android Debug"; then
+              fail "The result is signed with the Android debug key, not with your release key."
+            fi
+            SIGNED=$((SIGNED + 1))
+          done < <(find "$RUNNER_TEMP/in" -type f \( -name '*.apk' -o -name '*.aab' \))
+          [ "$SIGNED" -gt 0 ] || fail "No file was found to sign."
+          rm -f "$RUNNER_TEMP/almus-release.p12"
+          echo "kind=$KIND" >> "$GITHUB_OUTPUT"
+
+      - name: Upload signed APK
+        if: ${{ steps.sign.outputs.kind == 'apk' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: almus-apk-${{ inputs.build_id }}
+          path: ${{ runner.temp }}/out/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload signed AAB
+        if: ${{ steps.sign.outputs.kind == 'aab' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: almus-aab-${{ inputs.build_id }}
+          path: ${{ runner.temp }}/out/*.aab
+          if-no-files-found: error
+          retention-days: 14
