@@ -31,3 +31,10 @@ declaration, brackets balance, and the workflow was checked against the Reposito
 
 ## Round 4
 - Compared the re-uploaded zip with this project: it had the old workflow v1 and lacked round-3 fixes; this zip is the complete, current state. KeystoreGenerator.kt is at app/src/main/java/com/almus/appcreatorpro/service/signing/.
+
+## Round 5 (811 tests ran, 23 failed)
+- the_app_never_logs: removed the literal 'Log.e(' from a suggestion string in StaticDiagnostics.kt.
+- 8 workflow/signing failures: CI ran the OLD workflow v1; this zip has v2 (checked against the guard rules with a script).
+- 17 debug-sample failures (StaticDiagnosticsTest, BuildErrorAnalyzerTest, DebugSessionTest): the sample sources under
+  app/src/test/resources/phase8-samples/*/app/** are probably missing from the repository (GitHub web upload takes ~100 files at a time).
+  They are all in this zip (26 files).

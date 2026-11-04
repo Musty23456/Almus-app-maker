@@ -547,7 +547,7 @@ internal class CodeChecker(private val path: String, private val text: String, p
         for (m in Regex("catch\\s*\\([^)]*\\)\\s*\\{\\s*\\}").findAll(body)) {
             add(
                 staticIssue("static.empty-catch", ErrorCategory.RUNTIME_RISK, Severity.WARNING, "Empty catch block: the exception is silently ignored.", path, lineOfOffset(m.range.first),
-                    suggestion = "Log the exception (`Log.e(TAG, \"...\", e)`) or handle it, so failures are not hidden.", confidence = Confidence.HIGH),
+                    suggestion = "Report the exception to the user or handle it, so failures are not hidden.", confidence = Confidence.HIGH),
             )
         }
         if (isKotlin) {
