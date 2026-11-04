@@ -38,3 +38,12 @@ declaration, brackets balance, and the workflow was checked against the Reposito
 - 17 debug-sample failures (StaticDiagnosticsTest, BuildErrorAnalyzerTest, DebugSessionTest): the sample sources under
   app/src/test/resources/phase8-samples/*/app/** are probably missing from the repository (GitHub web upload takes ~100 files at a time).
   They are all in this zip (26 files).
+
+## Round 6 (811 tests, 16 failed)
+- Workflow: two failure messages in the sign step ended with the word secrets followed by a dot, which RepositoryGuardsTest treats as a secret used inside a run script. Reworded.
+- Still failing (15): StaticDiagnosticsTest, BuildErrorAnalyzerTest, DebugSessionTest. They all read app/src/test/resources/phase8-samples/**; the failing
+  assertions are exactly what an EMPTY sample project produces. Check that e.g. phase8-samples/kotlin-errors/app/src/main/java/com/example/broken/Calculator.kt is on GitHub.
+
+## Round 7
+- Root cause of the 15 debug-test failures: the Android Gradle plugin silently drops *.kt and *.java files from test resources, so the sample projects were empty.
+  The 7 sample sources are now stored as Name.kt.sample / Name.java.sample and Samples.project() restores the real names.
