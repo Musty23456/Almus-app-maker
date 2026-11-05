@@ -58,8 +58,8 @@ class CloudBuildViewModel(
     private val auth: GitHubAuthManager,
     private val orchestrator: CloudBuildOrchestrator,
     private val tracker: BuildTracker,
-    private val workflowTemplate: WorkflowTemplateProvider,
     private val buildConfigs: BuildConfigurationStore? = null,
+    private val workflowTemplate: WorkflowTemplateProvider,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(CloudBuildUiState())
