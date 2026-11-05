@@ -1,0 +1,4 @@
+app/src/main/java/com/example/broken/Syntax.java:5: error: ';' expected
+        int count = 5
+                     ^
+1 error

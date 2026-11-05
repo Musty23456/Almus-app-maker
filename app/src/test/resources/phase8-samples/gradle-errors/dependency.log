@@ -1,0 +1,21 @@
+> Task :app:preBuild UP-TO-DATE
+> Task :app:checkDebugAarMetadata
+> Task :app:mergeDebugResources
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:checkDebugAarMetadata'.
+> Could not resolve all files for configuration ':app:debugRuntimeClasspath'.
+   > Could not find com.squareup.okhttp3:okhtttp:4.12.0.
+     Searched in the following locations:
+       - https://dl.google.com/dl/android/maven2/com/squareup/okhttp3/okhtttp/4.12.0/okhtttp-4.12.0.pom
+       - https://repo.maven.apache.org/maven2/com/squareup/okhttp3/okhtttp/4.12.0/okhtttp-4.12.0.pom
+     Required by:
+         project :app
+   > Could not find androidx.core:core-ktx:99.0.0.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+
+BUILD FAILED in 9s

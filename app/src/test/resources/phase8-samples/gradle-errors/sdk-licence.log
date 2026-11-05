@@ -1,0 +1,7 @@
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Could not determine the dependencies of task ':app:compileDebugJavaWithJavac'.
+> Failed to find target with hash string 'android-36' in: /usr/local/lib/android/sdk
+
+BUILD FAILED in 3s

@@ -1,0 +1,150 @@
+name: Android Build
+
+# Builds the debug APK on GitHub-hosted runners.
+# - Manual: Actions tab -> "Android Build" -> Run workflow
+# - Automatic: every push to the main branch
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+# Least privilege: this workflow only needs to read the repository.
+permissions:
+  contents: read
+
+# Cancel an older run of the same branch when a newer one starts.
+concurrency:
+  group: android-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_VERSION: "8.9"
+
+jobs:
+  build:
+    name: Test and build debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # Phase 3: do not leave the workflow token in .git/config where build scripts could read it.
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;34.0.0"
+
+      # Installs the pinned Gradle version and caches Gradle data between runs.
+      # Secrets are never printed; this project does not use any.
+      - name: Set up Gradle (with caching)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
+
+      - name: Show tool versions
+        run: |
+          java -version
+          gradle --version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+      - name: Run unit tests
+        run: gradle testDebugUnitTest --stacktrace
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # Lint is informational in Phase 1 so a style warning never hides the APK.
+      - name: Run Android lint (non-blocking)
+        continue-on-error: true
+        run: gradle lintDebug --stacktrace
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # Optional stable signing key. The secrets are used ONLY in these two steps and only through environment
+      # variables. Without them the APK is still built, signed with the temporary Android debug key.
+      - name: Prepare signing key (optional)
+        id: signing
+        env:
+          KEYSTORE_B64: ${{ secrets.ALMUS_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ALMUS_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/almus.jks"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No signing key is configured, so the APK uses the temporary debug key. See README, section 'Signing the app'."
+          fi
+
+      - name: Build debug APK
+        env:
+          ALMUS_KEYSTORE_PATH: ${{ steps.signing.outputs.signed == 'true' && format('{0}/almus.jks', runner.temp) || '' }}
+          ALMUS_KEYSTORE_PASSWORD: ${{ steps.signing.outputs.signed == 'true' && secrets.ALMUS_KEYSTORE_PASSWORD || '' }}
+        run: gradle assembleDebug --stacktrace
+
+      - name: Remove signing key from the runner
+        if: always()
+        run: rm -f "$RUNNER_TEMP/almus.jks"
+
+      - name: Check APK signature
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
+          "$APKSIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/certs.txt"
+          SHA=$(grep -m1 "certificate SHA-256 digest" "$RUNNER_TEMP/certs.txt" | sed 's/.*: //')
+          if [ "$SIGNED" = "true" ]; then
+            if grep -q "Android Debug" "$RUNNER_TEMP/certs.txt"; then
+              echo "::error::A signing key was configured but the APK is still signed with the Android debug key."
+              exit 1
+            fi
+            echo "### Signed with the Almus key" >> "$GITHUB_STEP_SUMMARY"
+            echo "Certificate SHA-256: \`$SHA\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "Every build signed with this key shows the same value, so the new APK can update the installed app." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Not signed with the Almus key" >> "$GITHUB_STEP_SUMMARY"
+            echo "This APK uses a temporary debug key that changes between builds. Set up signing (README, 'Signing the app') to be able to update the installed app." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Verify APK exists
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK" ]; then
+            echo "::error::Build finished but $APK was not produced."
+            exit 1
+          fi
+          ls -lh "$APK"
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: almus-app-creator-pro-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
