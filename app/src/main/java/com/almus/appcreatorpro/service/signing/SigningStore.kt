@@ -109,25 +109,22 @@ class SigningStore(
     )
 
     private fun parse(id: String, text: String): SigningProfile? {
-    val o = try {
-        MiniJson.parseObject(text)
-    } catch (e: MiniJson.JsonException) {
-        return null
-    }
-    return SigningProfile(
-        id = id,
-        label = o.str("label") ?: return null,
-        alias = o.str("alias") ?: return null,
-        source = SigningSource.fromId(o.str("source")) ?: SigningSource.IMPORTED,
-        createdAtMillis = o.long("createdAtMillis") ?: 0L,
-        sha256 = o.str("sha256"),
-        subject = o.str("subject"),
-        verifiedOnDevice = o.bool("verifiedOnDevice") ?: true,
-        secretsConfirmedFor = o.arr("secretsConfirmedFor").orEmpty().filterIsInstance<String>(),
-    )
-    }
-    } catch (e: MiniJson.JsonException) {
-        null
+        val o = try {
+            MiniJson.parseObject(text)
+        } catch (e: MiniJson.JsonException) {
+            return null
+        }
+        return SigningProfile(
+            id = id,
+            label = o.str("label") ?: return null,
+            alias = o.str("alias") ?: return null,
+            source = SigningSource.fromId(o.str("source")) ?: SigningSource.IMPORTED,
+            createdAtMillis = o.long("createdAtMillis") ?: 0L,
+            sha256 = o.str("sha256"),
+            subject = o.str("subject"),
+            verifiedOnDevice = o.bool("verifiedOnDevice") ?: true,
+            secretsConfirmedFor = o.arr("secretsConfirmedFor").orEmpty().filterIsInstance<String>(),
+        )
     }
 
     // java.util.Base64 needs API 26, which is this app's minSdk, and works the same in unit tests.
