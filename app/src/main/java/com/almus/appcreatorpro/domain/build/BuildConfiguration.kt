@@ -38,6 +38,9 @@ data class BuildConfiguration(
         }
 
     val isBundle: Boolean get() = output == OutputFormat.AAB
+    val hasOverrides: Boolean
+    get() = !applicationId.isNullOrBlank() || !versionName.isNullOrBlank() || versionCode != null ||
+        minSdk != null || targetSdk != null || options.minify != null || options.shrinkResources != null
 
     /** True when the finished file must be signed with the user's own release key. */
     val needsReleaseSigning: Boolean
