@@ -54,6 +54,7 @@ data class BuildDetails(
     val failedSteps: List<FailedStep>,
     val artifacts: List<BuildArtifactInfo>,
     val log: BuildLogView?,
+    val artifactsNote: String? = null,
 )
 
 sealed interface DetailsResult {
