@@ -20,6 +20,9 @@ class AiOperations(private val backend: AiBackend, private val clockMillis: () -
         throw e
     } catch (e: AiException) {
         AiStep.Failed(e.message.orEmpty(), e.retryable)
+    } catch (e: Exception) {
+        // Any other problem (an unexpected answer shape, a bug) must become a message, never a crash of the whole app.
+        AiStep.Failed("The AI answer could not be processed (${e.javaClass.simpleName}: ${e.message.orEmpty().take(120)}). Try again.", retryable = true)
     }
 
     private suspend fun ask(task: AiTaskKind, text: String, onProgress: (Int) -> Unit): AiCompletion =
