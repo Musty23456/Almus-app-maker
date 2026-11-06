@@ -13,7 +13,29 @@ sealed interface Parsed<out T> {
 
 /** Finds the JSON object in a model answer (plain, or inside a Markdown fence) and parses it. Never repairs broken JSON. */
 object AiJson {
-    private val fence = Regex("```(?:json)?\\s*(\\{.*?})\\s*```", RegexOption.DOT_MATCHES_ALL)
+    /**
+     * Finds "```json { ... } ```" without a regular expression. A regex built at class-load time that Android's regex
+     * engine dislikes would throw an Error (not an Exception) and close the whole app the moment an answer arrives.
+     */
+    private fun fencedJson(text: String): String? {
+        var open = text.indexOf("```")
+        while (open >= 0) {
+            var i = open + 3
+            if (text.startsWith("json", i)) i += 4
+            while (i < text.length && text[i].isWhitespace()) i++
+            if (i < text.length && text[i] == '{') {
+                var close = text.indexOf('}', i)
+                while (close >= 0) {
+                    var k = close + 1
+                    while (k < text.length && text[k].isWhitespace()) k++
+                    if (text.startsWith("```", k)) return text.substring(i, close + 1)
+                    close = text.indexOf('}', close + 1)
+                }
+            }
+            open = text.indexOf("```", open + 1)
+        }
+        return null
+    }
 
     fun parseObject(text: String, truncated: Boolean): Parsed<Map<String, Any?>> {
         val json = extract(text)
@@ -29,7 +51,7 @@ object AiJson {
     private fun extract(text: String): String? {
         val trimmed = text.trim()
         if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed
-        fence.find(text)?.let { return it.groupValues[1] }
+        fencedJson(text)?.let { return it }
         val start = text.indexOf('{')
         val end = text.lastIndexOf('}')
         return if (start in 0 until end) text.substring(start, end + 1) else null
