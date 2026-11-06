@@ -45,11 +45,23 @@ class BuildMonitor(
             started = true
         }
         scope.launch {
-            store.observeBuilds().collect { records -> onRecords(records) }
+            try {
+                store.observeBuilds().collect { records -> onRecords(records) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Watching stops for this run only; it starts again at the next app start.
+            }
         }
         scope.launch {
-            // Turning notifications off removes the ones already on screen.
-            settings.notificationsEnabled.collect { enabled -> if (!enabled) sink.cancelAll() }
+            try {
+                // Turning notifications off removes the ones already on screen.
+                settings.notificationsEnabled.collect { enabled -> if (!enabled) sink.cancelAll() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Never let a notification problem close the app.
+            }
         }
     }
 
@@ -59,7 +71,11 @@ class BuildMonitor(
         } catch (e: Exception) {
             // Notifications must never break build tracking.
         }
-        applyPlan(policy.snapshot(records, now()))
+        try {
+            applyPlan(policy.snapshot(records, now()))
+        } catch (e: Exception) {
+            // A scheduling problem must never crash the app; the next change of a build tries again.
+        }
     }
 
     private fun applyPlan(snapshot: MonitorSnapshot) {

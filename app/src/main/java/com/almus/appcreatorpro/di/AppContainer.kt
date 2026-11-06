@@ -54,6 +54,7 @@ import com.almus.appcreatorpro.service.github.GitHubAuthManager
 import com.almus.appcreatorpro.service.github.KeystoreSecretStore
 import com.almus.appcreatorpro.service.github.OkHttpStreamTransport
 import com.almus.appcreatorpro.service.github.OkHttpTransport
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -75,6 +76,14 @@ import java.io.File
  */
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
+
+    /**
+     * Crash fix: every app-wide scope below uses this handler. Without it, ANY exception thrown inside a background
+     * `launch` (a damaged stored file, a WorkManager or notification problem, a network error nobody caught) kills the
+     * whole app, and because the same data is read again at every start the app then crashes at every launch.
+     * Cancellation is never reported here, so normal cancelling is unaffected.
+     */
+    private val appScopeHandler = CoroutineExceptionHandler { _, _ -> }
 
     val settingsRepository: SettingsRepository = SharedPreferencesSettingsRepository(
         appContext.getSharedPreferences("almus_settings", Context.MODE_PRIVATE),
@@ -140,7 +149,7 @@ class AppContainer(context: Context) {
     )
 
     /** App-wide scope: builds keep being tracked while the user moves between screens. */
-    val buildTracker = BuildTracker(orchestrator, buildStore, CoroutineScope(SupervisorJob() + Dispatchers.Default))
+    val buildTracker = BuildTracker(orchestrator, buildStore, CoroutineScope(SupervisorJob() + Dispatchers.Default + appScopeHandler))
 
     val buildService: BuildService = GitHubActionsBuildService(gitHubAuth, cloudBuildConfigStore, buildTracker, projectRepository, buildConfigurationStore)
 
@@ -176,7 +185,7 @@ class AppContainer(context: Context) {
         sink = notificationSink,
         scheduler = WorkManagerBuildSyncScheduler(appContext),
         follower = buildTracker,
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + appScopeHandler),
     )
 
     // ---- Phase 4: build results (details, APK download) ---------------------------------------------------
@@ -195,7 +204,7 @@ class AppContainer(context: Context) {
         downloader = artifactDownloader,
         store = apkStore,
         builds = buildStore,
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + appScopeHandler),
     )
 
     // ---- Phase 9: Gemini through the ALMUS backend -------------------------------------------------------------------
@@ -225,7 +234,7 @@ class AppContainer(context: Context) {
         projects = projectRepository,
         chatHistory = chatHistoryStore,
         changeHistory = changeHistoryStore,
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + appScopeHandler),
     )
 
     // ---- Phase 8: debugging (build error analysis, code checks, fixes) ---------------------------------------------

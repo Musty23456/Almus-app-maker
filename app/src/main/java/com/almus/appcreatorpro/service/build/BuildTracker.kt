@@ -68,9 +68,15 @@ class BuildTracker(
     /** Called when the app starts: builds that were still going when the app was closed are followed again. */
     fun resumeUnfinished() {
         scope.launch {
-            builds.getBuildHistory()
-                .filter { !it.isSample && !it.status.isTerminal && !it.pollingStopped }
-                .forEach { track(it.id) }
+            try {
+                builds.getBuildHistory()
+                    .filter { !it.isSample && !it.status.isTerminal && !it.pollingStopped }
+                    .forEach { track(it.id) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Damaged history must not stop the app; the user can refresh a build by hand.
+            }
         }
     }
 }
