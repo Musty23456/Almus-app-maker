@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -45,6 +46,7 @@ import com.almus.appcreatorpro.ai.ProjectPlan
 import com.almus.appcreatorpro.debug.AiAvailability
 import com.almus.appcreatorpro.editor.Language
 import com.almus.appcreatorpro.ui.AppViewModelProvider
+import java.io.File
 
 /** Describe an app -> review the plan -> review the generated files -> create the project. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,6 +61,9 @@ fun AiGeneratorScreen(
     val availability by viewModel.availability.collectAsStateWithLifecycle()
     var description by rememberSaveable { mutableStateOf("") }
     val generator = viewModel.generator
+    val context = LocalContext.current
+    val crashClipboard = LocalClipboardManager.current
+    var lastCrash by remember { mutableStateOf(readLastCrash(context.filesDir)) }
 
     Scaffold(
         topBar = {
@@ -70,6 +75,18 @@ fun AiGeneratorScreen(
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            lastCrash?.let { crashText ->
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("The app closed unexpectedly last time. Copy this and send it to the developer:", style = MaterialTheme.typography.titleSmall)
+                        Text(crashText.take(700), style = MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { crashClipboard.setText(AnnotatedString(crashText)) }) { Text("Copy") }
+                            OutlinedButton(onClick = { File(context.filesDir, "last_crash.txt").delete(); lastCrash = null }) { Text("Dismiss") }
+                        }
+                    }
+                }
+            }
             (availability as? AiAvailability.NotReady)?.let {
                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -115,6 +132,9 @@ fun AiGeneratorScreen(
         }
     }
 }
+
+private fun readLastCrash(dir: File): String? =
+    try { File(dir, "last_crash.txt").takeIf { it.isFile }?.readText()?.takeIf { it.isNotBlank() } } catch (e: Exception) { null }
 
 @Composable
 private fun Busy(text: String, chars: Int, onCancel: () -> Unit) {
