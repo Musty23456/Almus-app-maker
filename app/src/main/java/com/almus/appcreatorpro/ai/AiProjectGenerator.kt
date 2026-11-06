@@ -53,7 +53,7 @@ class AiProjectGenerator(
                     is AiStep.Failed -> _flow.value = GeneratorFlow.Failed(r.message, r.retryable)
                 }
             } catch (e: CancellationException) { _flow.value = GeneratorFlow.Idle; throw e }
-            catch (e: Exception) { _flow.value = GeneratorFlow.Failed("Planning failed: ${e.message.orEmpty().take(150).ifBlank { e.javaClass.simpleName }}", true) }
+            catch (e: Throwable) { _flow.value = GeneratorFlow.Failed("Planning failed: ${e.message.orEmpty().take(150).ifBlank { e.javaClass.simpleName }}", true) }
         }
     }
 
@@ -74,7 +74,7 @@ class AiProjectGenerator(
                     is AiStep.Failed -> _flow.value = GeneratorFlow.Failed(r.message, r.retryable)
                 }
             } catch (e: CancellationException) { _flow.value = GeneratorFlow.Idle; throw e }
-            catch (e: Exception) { _flow.value = GeneratorFlow.Failed("Generating failed: ${e.message.orEmpty().take(150).ifBlank { e.javaClass.simpleName }}", true) }
+            catch (e: Throwable) { _flow.value = GeneratorFlow.Failed("Generating failed: ${e.message.orEmpty().take(150).ifBlank { e.javaClass.simpleName }}", true) }
         }
     }
 
@@ -115,7 +115,7 @@ class AiProjectGenerator(
             } catch (e: CancellationException) {
                 _flow.value = GeneratorFlow.Idle
                 throw e
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 _flow.value = GeneratorFlow.Failed(e.message?.takeIf { it.isNotBlank() } ?: "The project could not be created.", false, createdId)
             }
         }
