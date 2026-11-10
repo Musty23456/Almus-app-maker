@@ -57,16 +57,20 @@ object AgentSnapshotJson {
 
     private fun strings(v: Any?): List<String> = (v as? List<*>).orEmpty().mapNotNull { it as? String }
 
-    private fun taskFromMap(o: Map<String, Any?>): AgentTask? = AgentTask(
-        id = o.str("id") ?: return null, title = o.str("title") ?: return null,
-        kind = AgentTaskKind.fromWire(o.str("kind")) ?: AgentTaskKind.CODE, detail = o.str("detail").orEmpty(),
-        paths = strings(o["paths"]), dependsOn = strings(o["dependsOn"]),
-        status = enumOf<TaskStatus>(o.str("status")) ?: TaskStatus.PENDING,
-        attempts = (o["attempts"] as? Number)?.toInt() ?: 0, note = o.str("note").orEmpty(), touched = strings(o["touched"]),
-    )
+    private fun taskFromMap(o: Map<String, Any?>): AgentTask? {
+        return AgentTask(
+            id = o.str("id") ?: return null, title = o.str("title") ?: return null,
+            kind = AgentTaskKind.fromWire(o.str("kind")) ?: AgentTaskKind.CODE, detail = o.str("detail").orEmpty(),
+            paths = strings(o["paths"]), dependsOn = strings(o["dependsOn"]),
+            status = enumOf<TaskStatus>(o.str("status")) ?: TaskStatus.PENDING,
+            attempts = (o["attempts"] as? Number)?.toInt() ?: 0, note = o.str("note").orEmpty(), touched = strings(o["touched"]),
+        )
+    }
 
     private fun adviceToMap(a: AgentDependencyAdvice) = mapOf("coordinate" to a.coordinate, "reason" to a.reason)
-    private fun adviceFromMap(o: Map<String, Any?>): AgentDependencyAdvice? = AgentDependencyAdvice(o.str("coordinate") ?: return null, o.str("reason").orEmpty())
+    private fun adviceFromMap(o: Map<String, Any?>): AgentDependencyAdvice? {
+        return AgentDependencyAdvice(o.str("coordinate") ?: return null, o.str("reason").orEmpty())
+    }
 
     fun toJson(s: AgentSnapshot): String = MiniJson.stringify(
         mapOf(

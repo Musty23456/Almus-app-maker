@@ -1,7 +1,7 @@
 package com.almus.appcreatorpro.preview
 
 /**
- * Android resources that matter for a preview: strings, colors, dimensions. Read from `res/values*/*.xml` with
+ * Android resources that matter for a preview: strings, colors, dimensions. Read from the XML files in the `res/values` folders (and its qualifiers) with
  * [SimpleXml]. In dark mode the files under `values-night` are applied on top, like Android does.
  * Themes and styles are not evaluated: attributes that point at them (`?attr/...`) resolve to nothing.
  */
