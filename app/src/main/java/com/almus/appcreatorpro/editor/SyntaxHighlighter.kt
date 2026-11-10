@@ -41,6 +41,12 @@ object SyntaxHighlighter {
                     tokens += Token(i, end, TokenType.COMMENT)
                     i = end
                 }
+                lang.tripleSingleQuotes && text.startsWith("'''", i) -> {
+                    val close = text.indexOf("'''", i + 3)
+                    val end = if (close < 0) n else close + 3
+                    tokens += Token(i, end, TokenType.STRING)
+                    i = end
+                }
                 lang.tripleQuotes && text.startsWith("\"\"\"", i) -> {
                     val close = text.indexOf("\"\"\"", i + 3)
                     val end = if (close < 0) n else close + 3
@@ -73,7 +79,8 @@ object SyntaxHighlighter {
                 c.isLetter() || c == '_' || c == '$' -> {
                     var j = i + 1
                     while (j < n && (text[j].isLetterOrDigit() || text[j] == '_' || text[j] == '$')) j++
-                    if (text.substring(i, j) in lang.keywords) tokens += Token(i, j, TokenType.KEYWORD)
+                    val word = text.substring(i, j)
+                    if ((if (lang.caseInsensitiveKeywords) word.lowercase() else word) in lang.keywords) tokens += Token(i, j, TokenType.KEYWORD)
                     i = j
                 }
                 else -> i++

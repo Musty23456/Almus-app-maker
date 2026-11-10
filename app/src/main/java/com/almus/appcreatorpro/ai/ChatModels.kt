@@ -177,6 +177,11 @@ object ChatMarkdown {
             "css" -> "x.css"
             "html" -> "x.html"
             "md", "markdown" -> "x.md"
+            "python", "py" -> "x.py"
+            "typescript", "ts", "tsx" -> "x.ts"
+            "dart" -> "x.dart"
+            "yaml", "yml" -> "x.yml"
+            "sql" -> "x.sql"
             else -> null
         }
         return when {

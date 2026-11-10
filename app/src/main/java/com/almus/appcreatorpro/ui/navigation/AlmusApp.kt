@@ -11,6 +11,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.almus.appcreatorpro.AlmusApplication
 import com.almus.appcreatorpro.ui.about.AboutScreen
+import com.almus.appcreatorpro.ui.agent.AgentNewProjectScreen
+import com.almus.appcreatorpro.ui.preview.PreviewScreen
+import com.almus.appcreatorpro.ui.agent.AgentWorkspaceScreen
 import com.almus.appcreatorpro.ui.ai.AiAssistantScreen
 import com.almus.appcreatorpro.ui.ai.AiGeneratorScreen
 import com.almus.appcreatorpro.ui.ai.AiSettingsScreen
@@ -141,6 +144,7 @@ fun AlmusApp(
                 initialColumn = jumpCol,
                 onOpenDebug = { navController.navigate(Routes.debug(editorProjectId)) },
                 onOpenAi = { navController.navigate(Routes.ai(editorProjectId)) },
+                onOpenPreview = { navController.navigate(Routes.preview(editorProjectId)) },
             )
         }
         composable(
@@ -154,6 +158,39 @@ fun AlmusApp(
                 onOpenSettings = { navController.navigate(Routes.AI_SETTINGS) },
                 onOpenFile = { path -> navController.navigate(Routes.editorAt(aiProjectId, path, null, null)) { launchSingleTop = true } },
                 onOpenDebug = { navController.navigate(Routes.debug(aiProjectId)) },
+                onOpenAgent = { navController.navigate(Routes.agent(aiProjectId)) },
+            )
+        }
+        composable(
+            route = Routes.AGENT,
+            arguments = listOf(navArgument("projectId") { type = NavType.StringType }),
+        ) { entry ->
+            val agentProjectId = entry.arguments?.getString("projectId").orEmpty()
+            AgentWorkspaceScreen(
+                projectId = agentProjectId,
+                onBack = { navController.popBackStack() },
+                onOpenSettings = { navController.navigate(Routes.AI_SETTINGS) },
+                onOpenDebug = { navController.navigate(Routes.debug(agentProjectId)) },
+                onOpenCloudBuild = { navController.navigate(Routes.cloudBuild(agentProjectId)) },
+            )
+        }
+        composable(
+            route = Routes.PREVIEW,
+            arguments = listOf(navArgument("projectId") { type = NavType.StringType }),
+        ) { entry ->
+            val previewProjectId = entry.arguments?.getString("projectId").orEmpty()
+            PreviewScreen(
+                projectId = previewProjectId,
+                onBack = { navController.popBackStack() },
+                onOpenSettings = { navController.navigate(Routes.AI_SETTINGS) },
+                onOpenEditorAt = { path, line -> navController.navigate(Routes.editorAt(previewProjectId, path, line, null)) },
+            )
+        }
+        composable(Routes.AGENT_NEW) {
+            AgentNewProjectScreen(
+                onBack = { navController.popBackStack() },
+                onOpenSettings = { navController.navigate(Routes.AI_SETTINGS) },
+                onOpenAgent = { id -> navController.navigate(Routes.agent(id)) { popUpTo(Routes.AGENT_NEW) { inclusive = true } } },
             )
         }
         composable(Routes.AI_SETTINGS) {
@@ -164,6 +201,7 @@ fun AlmusApp(
                 onBack = { navController.popBackStack() },
                 onOpenSettings = { navController.navigate(Routes.AI_SETTINGS) },
                 onOpenProject = { id -> navController.navigate(Routes.editor(id)) { popUpTo(Routes.AI_GENERATE) { inclusive = true } } },
+                onOpenAgent = { navController.navigate(Routes.AGENT_NEW) },
             )
         }
         composable(

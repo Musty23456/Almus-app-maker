@@ -1,5 +1,8 @@
 package com.almus.appcreatorpro.service.ai
 
+import com.almus.appcreatorpro.agent.AgentRunStore
+import com.almus.appcreatorpro.agent.AgentSnapshot
+import com.almus.appcreatorpro.agent.AgentSnapshotJson
 import com.almus.appcreatorpro.ai.AiProjectFiles
 import com.almus.appcreatorpro.ai.AppliedFile
 import com.almus.appcreatorpro.ai.AppliedRecord
@@ -87,6 +90,26 @@ class FileChatHistoryStore(private val dir: File) : ChatHistoryStore {
 
     override suspend fun clear(projectId: String) = withContext(Dispatchers.IO) {
         File(dir, safeName(projectId) + ".json").delete()
+        Unit
+    }
+}
+
+/** The last agent run of each project (plan, task memory, staged files, log), one JSON file per project in private storage. */
+class FileAgentRunStore(private val dir: File) : AgentRunStore {
+    private fun file(projectId: String) = File(dir, safeName(projectId) + ".json")
+
+    override suspend fun load(projectId: String): AgentSnapshot? = withContext(Dispatchers.IO) {
+        val f = file(projectId)
+        if (!f.isFile) return@withContext null
+        try { AgentSnapshotJson.fromJson(f.readText(Charsets.UTF_8)) } catch (e: Exception) { null }
+    }
+
+    override suspend fun save(projectId: String, snapshot: AgentSnapshot) = withContext(Dispatchers.IO) {
+        atomicWrite(file(projectId), AgentSnapshotJson.toJson(snapshot))
+    }
+
+    override suspend fun clear(projectId: String) = withContext(Dispatchers.IO) {
+        file(projectId).delete()
         Unit
     }
 }

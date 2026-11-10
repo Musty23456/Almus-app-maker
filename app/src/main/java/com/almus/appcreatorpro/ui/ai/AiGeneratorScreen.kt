@@ -55,6 +55,7 @@ fun AiGeneratorScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenProject: (String) -> Unit,
+    onOpenAgent: () -> Unit = {},
     viewModel: AiGeneratorViewModel = viewModel(factory = AppViewModelProvider.Factory),
 ) {
     val flow by viewModel.generator.flow.collectAsStateWithLifecycle()
@@ -70,7 +71,10 @@ fun AiGeneratorScreen(
             TopAppBar(
                 title = { Text("Generate an app with AI") },
                 navigationIcon = { IconButton(onClick = { generator.cancel(); generator.reset(); onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
-                actions = { TextButton(onClick = onOpenSettings) { Text("Settings") } },
+                actions = {
+                    TextButton(onClick = { generator.cancel(); generator.reset(); onOpenAgent() }) { Text("Agent") }
+                    TextButton(onClick = onOpenSettings) { Text("Settings") }
+                },
             )
         },
     ) { padding ->

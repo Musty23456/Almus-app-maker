@@ -78,6 +78,7 @@ fun EditorScreen(
     initialColumn: Int? = null,
     onOpenDebug: () -> Unit = {},
     onOpenAi: () -> Unit = {},
+    onOpenPreview: () -> Unit = {},
 ) {
     val viewModel: EditorViewModel = viewModel(
         key = "editor-$projectId",
@@ -207,6 +208,14 @@ fun EditorScreen(
                                         menuOpen = false
                                         // Save first so the assistant sees what is on screen.
                                         viewModel.saveAll { ok -> if (ok) onOpenAi() }
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Live preview") },
+                                    onClick = {
+                                        menuOpen = false
+                                        // Save first so the preview shows what is on screen.
+                                        viewModel.saveAll { ok -> if (ok) onOpenPreview() }
                                     },
                                 )
                                 DropdownMenuItem(

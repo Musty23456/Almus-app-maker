@@ -1,4 +1,4 @@
-# Almus App Creator Pro (Phase 9)
+# Almus App Creator Pro (Phase 20)
 
 An Android app for creating projects, editing code and (later) building APKs on GitHub Actions, all from a phone.
 
@@ -8,6 +8,13 @@ Phase 3: real GitHub sign-in, repository selection and cloud builds on GitHub Ac
 **Phase 4 completes the build result system: live build monitor, logs and compiler errors, APK download / share / save, retry and a smarter history** (see "Phase 4" below).
 
 ## Status: what is and is not verified
+
+> **Phase 10 (verification, see PHASE10_REPORT.md):** this environment again had **no Kotlin compiler, Gradle, Android SDK or network**, so the Android app was **not compiled, not unit-tested and not linted** in Phase 10. Nothing in Phases 6-9 has been proven to compile. What *was* run: the backend suite (**35/35 tests pass**, 5 of them new, with mutation checks on 3 of the 5), an offline consistency check over all 256 Kotlin files (`python3 scripts/verify_offline.py .`, which is **not** a compiler) and a YAML parse of all workflows. Changes: stray ProGuard file merged into the real one, version 0.10.0 (code 11), and a new independent `checks` CI job. **The first green GitHub Actions run (`gradle testDebugUnitTest assembleDebug`) is still the only real proof that the app builds.**
+
+> **Phase 11 (advanced editor, see PHASE11_REPORT.md):** adds an editor ENGINE layer (13 new Kotlin files, 121 new unit tests) and five new
+> languages for syntax highlighting. **None of it was compiled or run** (same missing toolchain as Phase 10), and **only the five new languages are visible
+> in the app**; completion, folding, outline, project search, multi-cursor, minimap, themes, shortcuts, split-screen state and the AI helpers are tested-by-design
+> logic that is **not connected to the editor screen yet**. No editor library was adopted. Details and the exact list of what works are in the report.
 
 > Phase 9 (Gemini AI): see PHASE9_REPORT.md. The **backend** (`backend/`, Node.js) was run and tested here: **30 tests pass** against a mock Gemini server, plus a mutation check. The **Android/Kotlin code of Phase 9 could NOT be compiled here** (this environment had no Kotlin compiler, Gradle, Android SDK or network), so its 100+ new JUnit tests were written but **not run**. Security-critical regexes and the diff algorithm were checked on the JVM. Build once with GitHub Actions (`./gradlew testDebugUnitTest assembleDebug`) and fix any compile errors before relying on it. **Also note:** the uploaded Phase 8 ZIP did not contain the `domain/build` and `service/build` packages that the code imports; they must be present in your real repository.
 
@@ -82,8 +89,31 @@ app/src/test/...  197 unit tests
 `SourceFileRepository` is the seam future build engines will use to read a project's files, whether they build in the
 cloud (GitHub Actions) or offline. `BuildService` is unchanged.
 
+## Phase 11: advanced editor engine
+
+New plain-Kotlin classes in `editor/` (no Android dependency, so they can be unit-tested on a JVM) and one in `ai/`:
+
+| Class | What it does | Limits |
+|---|---|---|
+| `Language` (extended) | Python, TypeScript, Dart, YAML, SQL join Kotlin, Java, XML, JSON, JS, HTML, CSS, Markdown. **Live** through the existing highlighter | Highlighting is token based, not semantic |
+| `OutlineEngine`, `DefinitionFinder` | File outline and name-based "go to definition" / symbol list | Line-by-line patterns; no types or scopes; Java methods need a modifier |
+| `FoldingEngine` | Fold regions from brackets, tags, indentation, Markdown headings | Not a parser; unbalanced code gives no region |
+| `CompletionEngine` | Keywords, snippets, words in the file, project symbols; camel-hump matching | Lexical only: no types, nothing after `.` |
+| `Navigation`, `LineIndex` | Go to line (`12`, `12:5`), word at caret, offset/line conversion | |
+| `LineCommands` | Duplicate, delete, move lines; toggle comment per language | |
+| `MultiCursor` | Insert, delete, add caret above/below, select next/all occurrences | Needs a surface that can draw several carets |
+| `ProjectSearch` | Search and replace over a path-to-text map (case, whole word, regex) | Per line; skips binary files |
+| `MinimapModel` | Density rows and viewport mapping for a minimap | Drawing not written |
+| `EditorThemes` | Four built-in themes, custom themes from hex colours, contrast check | No settings screen or persistence yet |
+| `ShortcutMap`, `KeyChord` | Default external-keyboard shortcuts, conflict-safe rebinding | The editor screen still handles only Tab / Shift+Tab |
+| `SplitLayout` | State for one or two editor panes (side by side or stacked) | No split UI |
+| `EditorAiPrompts` | Explain / suggest requests for the Phase 9 backend with a code window, secret scrubbing, blocked sensitive files | No button yet; never run against real Gemini |
+
+Run the logic tests with Gradle on a machine with the Android SDK: `gradle testDebugUnitTest --tests "*Phase11*" --tests "*EditorAiTest"`.
+
 ## Build and run
 
+- Backend tests (no install needed, Node 18.17+): `cd backend && npm test`. Offline consistency check: `python3 scripts/verify_offline.py .`
 - Locally: open in Android Studio (Ladybug or newer), or run `gradle testDebugUnitTest assembleDebug` with Gradle 8.9.
 - GitHub: push to `main`, or Actions tab > **Android Build** > **Run workflow**. Download the artifact
   **almus-app-creator-pro-debug-apk** from the bottom of the run page (a zip containing `app-debug.apk`).
@@ -500,3 +530,11 @@ New: `domain/transfer/*` (models, errors, `ZipEntryGuard`, `ProjectDetector`, `P
 `AppViewModelProvider`, `Routes`, `AlmusApp`, `app/build.gradle.kts` (version only). See `PHASE5_REPORT.md` for the full list and
 the verification status.
 
+
+## Phase 13: AI development agent
+
+Describe an app or a change; the agent plans, you approve the plan, it works in a staging area, checks its own files and shows diffs. Nothing reaches your project until you apply it, and applying can be rolled back. See PHASE13_REPORT.md (the new Kotlin is uncompiled and its tests have not been run; the backend tests pass).
+
+## Phase 20: live preview
+
+Editor menu, Live preview. Web pages run in a sandboxed WebView (no network by default, no access to your files). Android XML and Compose are drawn as labelled approximations, not the Android runtime. See PHASE20_REPORT.md (the new Kotlin is uncompiled and its tests have not been run; the backend tests pass).

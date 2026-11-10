@@ -1,0 +1,115 @@
+# Phase 10 report: full build verification and stability
+
+## Read this first
+**The Android app was NOT compiled, NOT unit-tested and NOT linted in this phase.** The environment had no Gradle, no Kotlin
+compiler, no Android SDK and no network (commands and output below). Phases 6-9 were never compiled either, so **no claim
+that the app builds or that its ~810 JUnit tests pass can be made.** Only the Node.js backend could be genuinely run.
+The acceptance criterion "the application must compile and existing tests must pass" is therefore **unverified, not met**.
+The first green GitHub Actions run of `gradle testDebugUnitTest assembleDebug` is still the real test.
+Phase 11 was not started. Nothing was pushed to GitHub.
+
+## Task status (16 requested tasks)
+| # | Task | Status |
+|---|---|---|
+| 1 | Inspect project structure | Done: 332 files, 200 main + 56 test Kotlin files, backend (11 src/test JS files), 3 workflows, 10 reports |
+| 2 | Inspect Kotlin sources | Partly: structural checks by script (below), spot reads of build.gradle.kts, manifest, orchestrator. Not a line-by-line review of 200 files |
+| 3 | Verify Gradle config / dependencies | Read only: AGP 8.7.3, Kotlin 2.0.21, Gradle 8.9 (workflow), JDK 17, compileSdk 35 are consistent with each other. Dependency resolution **not run** (no network) |
+| 4 | Android compilation | **NOT RUN** |
+| 5 | Unit tests (Android) | **NOT RUN.** 810 `@Test` methods counted by text search, 0 duplicate test names |
+| 6 | Lint / static analysis | **Android lint NOT RUN.** Only my offline script (not a linter) |
+| 7 | GitHub Actions workflows | Parsed as YAML (all valid). Read `android-build.yml` and the injection design of `almus-cloud-build.yml` (see Findings). Never executed here |
+| 8 | Backend integration | Backend run and tested (35/35). Android<->backend routes compared by reading: `/v1/auth/login`, `/v1/models`, `/v1/generate`, `/v1/generate/stream` match on both sides. Follow-up check done (see Findings): fields, task names and error codes compared by script/reading |
+| 9 | Gemini AI integration | **NOT TESTED against real Gemini** (no key, no network). Only against the mock upstream in the backend tests |
+| 10 | Project create/import/export/backup/restore | **NOT RUN** (Android tests could not execute) |
+| 11 | GitHub repository integration | **NOT RUN** |
+| 12 | Cloud APK/AAB builds | **NOT RUN** |
+| 13 | Signing configuration | Read only (`app/build.gradle.kts`, workflows). **NOT RUN** |
+| 14 | Background build monitoring | **NOT RUN** (and Phase 7 states no Robolectric/instrumented tests exist) |
+| 15 | Security and error handling | Reviewed backend source and workflow design (Findings). Android side not reviewed in depth |
+| 16 | Prototype implementations | See "Prototype code" |
+
+## Exact commands executed and results
+```
+unzip -q -o /mnt/user-data/uploads/Almus-app-maker-main__9__1.zip
+which java gradle kotlinc node python3 adb      -> /usr/bin/java /usr/bin/node /usr/bin/python3 ; no gradle, kotlinc or adb
+java -version                                   -> OpenJDK 21.0.12 (the project targets JDK 17)
+echo $ANDROID_HOME $ANDROID_SDK_ROOT            -> empty
+ls ~/.gradle ~/.m2                              -> neither exists
+curl -sS -m 8 -I https://repo.maven.apache.org  -> curl: (6) Could not resolve host
+find / -name "kotlinc*" -o -name "kotlin-compiler*" -o -name android.jar -o -name "gradle-8*" -o -name sdkmanager  -> nothing
+ls gradlew*                                     -> none: the repo has no Gradle wrapper (CI installs Gradle 8.9 via setup-gradle)
+
+cd backend && npm test                          -> BEFORE changes: tests 30, pass 30, fail 0
+cd backend && npm test                          -> AFTER adding test/phase10.test.js: tests 35, pass 35, fail 0
+```
+Mutation checks (source deliberately broken, new tests must fail, source then restored and `diff` confirmed identical):
+```
+skip scrub() on the request          -> "streaming: secrets ..." FAILS (as intended)
+remove the streamed-size check       -> "body limit: ... chunks" FAILS
+allow wrong method on /v1/models     -> "routes: every route ..." FAILS
+```
+Not mutation-checked: the new login-input test and the new login-counter test.
+```
+python3 scripts/verify_offline.py .             -> kotlin files 256 (200 main / 56 test); @Test 810; problems: 0;
+                                                   YAML ok: almus-cloud-build.yml (build, sign), android-build.yml (build, checks), create-signing-key.yml (create)
+python3 scripts/verify_offline.py <corrupted copy: unbalanced bracket, wrong package line, missing import>
+                                                -> 13 problems reported, exit code 1 (so the script can fail)
+duplicate @Test function-name scan (ad hoc python) -> 0 files with duplicates
+```
+First version of my script flagged 4 items; all were false positives of the script itself and were fixed in the script, not the app:
+`BuildConfig`/`R` are generated by AGP; one unbalanced parenthesis in `debug/StaticDiagnostics.kt` came from my string scanner not
+understanding a nested `${ if (...) "..." }` template (the script now does, and reports 0).
+
+## What the offline script does and does not prove
+It checks brackets, package-vs-folder, duplicate types, internal imports that resolve to nothing, and YAML validity. It does **not**
+type-check, resolve member calls, check generics, Compose usage, resources, manifest merging or test assertions. 0 problems from it
+is **not** evidence that the code compiles. Good sign only: the `domain/build` and `service/build` packages that the Phase 9 note said
+were missing **are present in this ZIP** and every internal import resolves.
+
+## Findings and changes
+Confirmed and fixed:
+1. **Stray ProGuard file** `app/src/proguard-rules.pro` (Gradle reads `app/proguard-rules.pro` only) held OkHttp/Okio/Conscrypt/OpenJSSE
+   `-dontwarn` rules that the real file lacked. Merged into `app/proguard-rules.pro`, stray file removed. **Release/R8 builds have never been run**, so this is untested.
+2. **CI never ran the backend tests.** Added an independent job `checks` to `android-build.yml` (Node 22: `npm test`, plus
+   `python3 scripts/verify_offline.py .`). It cannot block or hide the APK job. Not yet run on GitHub.
+3. **Backend coverage gaps** closed with 5 tests (`backend/test/phase10.test.js`): login input handling (415, bad JSON, non-string/oversized/empty code),
+   wrong HTTP method on every route, chunked oversized body, secrets on the streaming path, login-failure counter reset.
+4. Version set to **0.10.0 (code 11)** in `app/build.gradle.kts` and `backend/package.json`. No test pins the old value (searched).
+5. Added `scripts/verify_offline.py`, README status section and command notes.
+
+Reviewed, no defect found: workflow `almus-cloud-build.yml` passes every `inputs.*` value into shell steps only through `env:`
+(the other `${{ }}` uses are `with:`, `working-directory`, artifact names and `if:`); backend auth (HMAC, constant-time compare, expiry), limiter, redaction, validation, body limit.
+Observations, not changed: the backend accepts only the exact scheme `Bearer ` (RFC 6750 says the scheme is case-insensitive; the app sends the exact form);
+`app/build.gradle.kts` pins `buildToolsVersion = "34.0.0"`, which the workflow installs, but a local build needs it too.
+
+Contract check, Android client (`GeminiBackendClient`) vs backend (reading plus a `grep` diff, nothing executed on the Android side):
+- Request body `task`/`model`/`messages[role,content]`, response `text/model/finishReason/usage{promptTokens,outputTokens,totalTokens}/redactions`,
+  login `token/expiresInSeconds`, SSE events `meta/delta/done/error` and their fields all match.
+- The 10 task names are identical on both sides.
+- Every backend error code except four is mapped by the client. Unmapped: `internal`, `not_found`, `method_not_allowed`, `client_closed`; they fall to the generic
+  "unavailable" kind. Effect: a wrong backend address that still answers JSON `not_found` shows an "unavailable" message instead of "check the address". Cosmetic; not changed because the Kotlin cannot be compiled here.
+
+## Known imported-project binary limitation: confirmed, NOT fixed
+Mechanism: import sorts non-editable files (PNG, JAR, files > 512 KB, odd names) into `projects/<id>/extra/`. Cloud build gathers files with
+`CloudBuildOrchestrator.readFiles()` -> `files.listFiles()` / `readFile()` which return **text** (`Map<String, String>`) from `files/` only, and the
+GitHub upload path is text based. Search found **no** reference to `extra/` in `service/build`, `ui/cloudbuild`, or the validator, so **a cloud build of an imported project that needs
+binaries (launcher PNGs, `gradle-wrapper.jar`) starts and then fails inside the build with no earlier warning**; only the import review screen mentions the count.
+Not fixed because a real fix changes the `GitHubApi` interface (Git blobs with base64 content, tree/commit creation) and its fakes, which I could not compile.
+Recommended design: add `readBinary` to the file port, upload blobs through the Git Data API, and until then make `preflight()` return a clear blocker when `extra/` is non-empty.
+
+## Prototype code
+`PrototypeGitHubRepository`, `SampleBuildRepository`, `InMemoryProjectRepository`, `SampleData` (all under `data/`) are not referenced by `AppContainer`;
+only their own files and tests use them. They can stay as test doubles or be removed after a compile-checked cleanup. Other items that are real but unproven:
+`GeminiDebugProvider` and the whole `ai` package (never run against Gemini), the Phase 6 init script (never run against real AGP), BouncyCastle keystore creation on a phone,
+`WorkManagerBuildSyncScheduler`, notifications, the SAF pickers, `NoAiProvider`/`UnavailableLogcatSource` (intentional ports, not features).
+
+## Remaining limitations (honest list)
+- The Android app has never been compiled or run by any author-side tool; Phases 6-9 carry accumulated compile risk. Expect compile/test failures on the first CI run.
+- Android lint, the release/R8 build, the AAB path, signing, WorkManager, notifications and real Gemini calls are untested.
+- Offline script is heuristic. Backend tests use a mock Gemini; rate limits and login lockouts are in memory (single instance).
+- Binary files in imported projects are not built (above).
+- The 5 new backend tests are real but small; no new Android tests were added: tests I cannot compile could break the entire test source set and hide every other result.
+
+## Next step for you
+Run the **Android Build** workflow and send me the log. Fix compile errors first, then test failures, then lint. Please also confirm the new `checks` job is green.
+Then try on a device: create, import, export, backup/restore a project; connect GitHub; run a debug cloud build; test the AI backend with your real key.

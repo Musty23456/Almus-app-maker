@@ -68,6 +68,7 @@ fun AiAssistantScreen(
     onOpenSettings: () -> Unit,
     onOpenFile: (String) -> Unit,
     onOpenDebug: () -> Unit,
+    onOpenAgent: () -> Unit = {},
 ) {
     val vm: AiAssistantViewModel = viewModel(key = "ai-$projectId", factory = AppViewModelProvider.aiAssistantFactory(projectId))
     val session by vm.session.collectAsStateWithLifecycle()
@@ -86,7 +87,10 @@ fun AiAssistantScreen(
             TopAppBar(
                 title = { Text("AI assistant") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") } },
-                actions = { TextButton(onClick = onOpenSettings) { Text("Settings") } },
+                actions = {
+                    TextButton(onClick = onOpenAgent) { Text("Agent") }
+                    TextButton(onClick = onOpenSettings) { Text("Settings") }
+                },
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },

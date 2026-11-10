@@ -28,6 +28,9 @@ object Routes {
     const val AI = "ai/{projectId}"
     const val AI_SETTINGS = "aisettings"
     const val AI_GENERATE = "aigenerate"
+    const val AGENT = "agent/{projectId}"
+    const val PREVIEW = "preview/{projectId}"
+    const val AGENT_NEW = "agentnew"
 
     /** Value of the BACKUPS route argument that means "all projects". */
     const val ALL_BACKUPS = "all"
@@ -42,6 +45,8 @@ object Routes {
     fun debug(projectId: String, buildId: String? = null): String =
         "debug/${RouteArgs.encode(projectId)}" + (if (buildId != null) "?buildId=${RouteArgs.encode(buildId)}" else "")
     fun ai(projectId: String) = "ai/${RouteArgs.encode(projectId)}"
+    fun agent(projectId: String) = "agent/${RouteArgs.encode(projectId)}"
+    fun preview(projectId: String) = "preview/${RouteArgs.encode(projectId)}"
     fun repos(projectId: String) = "repos/$projectId"
     fun cloudBuild(projectId: String) = "cloudbuild/$projectId"
     fun buildStatus(buildId: String) = "build/$buildId"

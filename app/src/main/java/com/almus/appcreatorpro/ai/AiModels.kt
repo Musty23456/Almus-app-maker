@@ -21,6 +21,12 @@ enum class AiTaskKind(val wire: String, val expectsJson: Boolean) {
     GENERATE_PROJECT("generate_project", true),
     EDIT_PROJECT_SELECT("edit_project_select", true),
     EDIT_PROJECT("edit_project", true),
+    // Phase 13: the autonomous agent. Each name has its own reviewed instructions in the backend (prompts.js).
+    AGENT_PLAN("agent_plan", true),
+    AGENT_TASK("agent_task", true),
+    AGENT_FIX("agent_fix", true),
+    // Phase 20: UI generation for the live preview.
+    PREVIEW_UI("preview_ui", true),
     DEBUG("debug", true),
     REVIEW("review", true),
 }

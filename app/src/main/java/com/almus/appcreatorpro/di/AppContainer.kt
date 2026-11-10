@@ -62,6 +62,8 @@ import com.almus.appcreatorpro.ai.AiBackend
 import com.almus.appcreatorpro.ai.AiSettingsStore
 import com.almus.appcreatorpro.ai.GeminiDebugProvider
 import com.almus.appcreatorpro.service.ai.AiHub
+import com.almus.appcreatorpro.service.preview.PreviewHub
+import com.almus.appcreatorpro.service.ai.FileAgentRunStore
 import com.almus.appcreatorpro.service.ai.FileChatHistoryStore
 import com.almus.appcreatorpro.service.ai.FileChangeHistoryStore
 import com.almus.appcreatorpro.service.ai.GeminiBackendClient
@@ -219,6 +221,8 @@ class AppContainer(context: Context) {
     private val chatHistoryStore = FileChatHistoryStore(File(appContext.filesDir, "ai-chat"))
     private val changeHistoryStore = FileChangeHistoryStore(File(appContext.filesDir, "ai-changes"))
 
+    private val agentRunStore = FileAgentRunStore(File(appContext.filesDir, "ai-agent"))
+
     val aiHub = AiHub(
         backend = aiBackend,
         sourceFiles = sourceFileRepository,
@@ -226,7 +230,11 @@ class AppContainer(context: Context) {
         chatHistory = chatHistoryStore,
         changeHistory = changeHistoryStore,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+        agentStore = agentRunStore,
     )
+
+    /** Phase 20: live previews (read-only, sandboxed) and AI-generated UI drafts. */
+    val previewHub = PreviewHub(aiHub, projectRepository, CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))
 
     // ---- Phase 8: debugging (build error analysis, code checks, fixes) ---------------------------------------------
     /** One debug session per project/build, kept while the app runs. Phase 9 connects Gemini as its AI provider. */

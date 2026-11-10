@@ -7,6 +7,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.almus.appcreatorpro.AlmusApplication
 import com.almus.appcreatorpro.di.AppContainer
+import com.almus.appcreatorpro.ui.agent.AgentNewProjectViewModel
+import com.almus.appcreatorpro.ui.preview.PreviewViewModel
+import com.almus.appcreatorpro.ui.agent.AgentViewModel
 import com.almus.appcreatorpro.ui.ai.AiAssistantViewModel
 import com.almus.appcreatorpro.ui.ai.AiGeneratorViewModel
 import com.almus.appcreatorpro.ui.ai.AiSettingsViewModel
@@ -95,6 +98,7 @@ object AppViewModelProvider {
         initializer { GitHubConnectionViewModel(auth = container().gitHubAuth) }
         initializer { AiSettingsViewModel(settings = container().aiSettings, backend = container().aiBackend) }
         initializer { AiGeneratorViewModel(hub = container().aiHub) }
+        initializer { AgentNewProjectViewModel(hub = container().aiHub) }
         initializer {
             CreateProjectViewModel(
                 createProject = container().createProjectUseCase,
@@ -177,6 +181,14 @@ object AppViewModelProvider {
 
     fun aiAssistantFactory(projectId: String): ViewModelProvider.Factory = viewModelFactory {
         initializer { AiAssistantViewModel(projectId = projectId, hub = container().aiHub) }
+    }
+
+    fun previewFactory(projectId: String): ViewModelProvider.Factory = viewModelFactory {
+        initializer { PreviewViewModel(projectId = projectId, hub = container().previewHub) }
+    }
+
+    fun agentFactory(projectId: String): ViewModelProvider.Factory = viewModelFactory {
+        initializer { AgentViewModel(projectId = projectId, hub = container().aiHub) }
     }
 
     /** The editor needs to know which project it edits, so it gets its own factory. */

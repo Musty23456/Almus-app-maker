@@ -120,7 +120,7 @@ private fun ChangeSetCard(entry: ChangeEntry, session: AiProjectSession, onApply
 }
 
 @Composable
-private fun ChangeFileRow(c: ProposedChange, checked: Boolean, enabled: Boolean, onToggle: (Boolean) -> Unit) {
+internal fun ChangeFileRow(c: ProposedChange, checked: Boolean, enabled: Boolean, onToggle: (Boolean) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Column {
         Row(Modifier.fillMaxWidth().clickable { open = !open }, verticalAlignment = Alignment.CenterVertically) {
@@ -140,7 +140,7 @@ private fun ChangeFileRow(c: ProposedChange, checked: Boolean, enabled: Boolean,
 
 /** Before/after as a line diff: removed lines red, added lines green, a few unchanged lines around each change. */
 @Composable
-private fun DiffView(c: ProposedChange) {
+internal fun DiffView(c: ProposedChange) {
     val rows = remember(c) { LineDiff.collapse(c.diff, 3).take(600) }
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).horizontalScroll(rememberScrollState()).padding(6.dp)) {
         rows.forEach { l ->
