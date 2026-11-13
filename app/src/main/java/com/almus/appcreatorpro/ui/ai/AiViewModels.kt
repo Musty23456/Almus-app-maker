@@ -9,6 +9,9 @@ import com.almus.appcreatorpro.ai.AiProjectGenerator
 import com.almus.appcreatorpro.ai.AiProjectSession
 import com.almus.appcreatorpro.ai.AiSettingsStore
 import com.almus.appcreatorpro.ai.ApplyOutcome
+import com.almus.appcreatorpro.ai.CodeReview
+import com.almus.appcreatorpro.ai.GeneratedCodeReviewer
+import com.almus.appcreatorpro.ai.ProjectProfile
 import com.almus.appcreatorpro.ai.ProjectPlan
 import com.almus.appcreatorpro.ai.UndoOutcome
 import com.almus.appcreatorpro.debug.AiAvailability
@@ -82,6 +85,10 @@ class AiAssistantViewModel(private val projectId: String, private val hub: AiHub
     val availability: StateFlow<AiAvailability?> = _availability.asStateFlow()
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
+    private val _profile = MutableStateFlow<ProjectProfile?>(null)
+    val profile: StateFlow<ProjectProfile?> = _profile.asStateFlow()
+    private val _codeReview = MutableStateFlow<CodeReview?>(null)
+    val codeReview: StateFlow<CodeReview?> = _codeReview.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -96,6 +103,7 @@ class AiAssistantViewModel(private val projectId: String, private val hub: AiHub
         viewModelScope.launch {
             _availability.value = hub.backend.availability()
             _paths.value = try { _session.value?.selectablePaths().orEmpty() } catch (e: Exception) { emptyList() }
+            _profile.value = try { _session.value?.projectProfile() } catch (e: Exception) { null }
         }
     }
 
@@ -143,6 +151,38 @@ class AiAssistantViewModel(private val projectId: String, private val hub: AiHub
             }
         }
     }
+
+    /** Phase 24: "Review & apply" on a chat answer. Checks the code and shows it file by file; nothing is offered or written yet. */
+    fun reviewChat(turnId: String) {
+        val s = _session.value ?: return
+        val turn = s.chat.state.value.turns.firstOrNull { it.id == turnId } ?: return
+        viewModelScope.launch {
+            val r = try { GeneratedCodeReviewer.review(turn, s.files, System.currentTimeMillis()) } catch (e: Exception) { null }
+            if (r == null || (r.isEmpty && r.rejected.isEmpty())) {
+                _message.value = "No code block with a file name was found. Ask the AI to give each file as \"File: path\" before its code, or attach the file you want to change."
+            } else if (r.isEmpty) {
+                _message.value = r.rejected.first().reason
+            } else {
+                _codeReview.value = r
+            }
+        }
+    }
+
+    /** The user accepted these files in the review: they become ONE change in the Changes tab, where Apply is a separate, explicit step. */
+    fun confirmReview(accepted: Set<String>) {
+        val s = _session.value ?: return
+        val review = _codeReview.value ?: return
+        val set = GeneratedCodeReviewer.changeSetFor(review, accepted, System.currentTimeMillis())
+        _codeReview.value = null
+        if (set != null) {
+            s.changes.offer(set)
+            _message.value = "Added to Changes (${set.changes.size} file(s)). Press Apply there to write them; Undo is available afterwards."
+        } else {
+            _message.value = "Nothing was selected."
+        }
+    }
+
+    fun dismissReview() { _codeReview.value = null }
 
     fun dismissMessage() { _message.value = null }
 }

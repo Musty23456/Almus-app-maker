@@ -1,23 +1,53 @@
 package com.almus.appcreatorpro.ui.components
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.almus.appcreatorpro.domain.model.BuildRecord
 import com.almus.appcreatorpro.domain.model.Project
+import com.almus.appcreatorpro.domain.model.ProjectType
+import com.almus.appcreatorpro.ui.theme.Spacing
 import com.almus.appcreatorpro.util.Formatters
+
+/** Letter tile for a project; the color tells the project type apart (decorative, the type is also written as text). */
+@Composable
+private fun ProjectAvatar(project: Project) {
+    val scheme = MaterialTheme.colorScheme
+    val (container, content) = when (project.type) {
+        ProjectType.ANDROID_KOTLIN -> scheme.primaryContainer to scheme.onPrimaryContainer
+        ProjectType.ANDROID_JAVA -> scheme.secondaryContainer to scheme.onSecondaryContainer
+        ProjectType.WEB -> scheme.tertiaryContainer to scheme.onTertiaryContainer
+    }
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(MaterialTheme.shapes.medium)
+            .background(container)
+            .clearAndSetSemantics { },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = project.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+            style = MaterialTheme.typography.titleMedium,
+            color = content,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
 
 @Composable
 fun ProjectCard(
@@ -27,17 +57,12 @@ fun ProjectCard(
     onClick: () -> Unit,
     trailing: @Composable (() -> Unit)? = null,
 ) {
-    Card(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-    ) {
+    AlmusCard(modifier = modifier.fillMaxWidth(), onClick = onClick) {
         Row(
-            modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
+            ProjectAvatar(project)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = project.name,
@@ -76,17 +101,10 @@ fun BuildCard(
     /** Optional content under the main row (Phase 4: APK availability and download actions). */
     extra: @Composable (() -> Unit)? = null,
 ) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-    ) {
-      Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    AlmusCard(modifier = modifier.fillMaxWidth(), onClick = onClick) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -112,6 +130,5 @@ fun BuildCard(
             BuildStatusPill(status = build.status)
         }
         extra?.invoke()
-      }
     }
 }

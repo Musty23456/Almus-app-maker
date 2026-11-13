@@ -3,6 +3,7 @@ package com.almus.appcreatorpro.service.artifacts
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.security.MessageDigest
 
 /** An APK saved by the app. [file] lives in the app's private storage. */
 class StoredApk(val buildId: String, val file: File) {
@@ -13,6 +14,9 @@ class StoredApk(val buildId: String, val file: File) {
     val sizeBytes: Long get() = file.length()
     val lastModifiedMillis: Long get() = file.lastModified()
 }
+
+/** Result of [ApkStore.copyToWithChecksum]. */
+class CopyResult(val bytes: Long, val sha256: String)
 
 /**
  * Where downloaded APKs live: `<root>/<buildId>/<name>.apk`, inside the app's private storage (no storage permission
@@ -69,6 +73,28 @@ class ApkStore(private val root: File) {
         apk.file.inputStream().use { return copyStream(it, out) }
     }
 
+    /**
+     * Like [copyTo], and also computes the SHA-256 of exactly the bytes that were read and written. The caller compares it
+     * with the checksum it expected, so a file that changed during the copy is noticed.
+     */
+    fun copyToWithChecksum(apk: StoredApk, out: OutputStream): CopyResult {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val bytes = apk.file.inputStream().use { input ->
+            val buffer = ByteArray(32 * 1024)
+            var total = 0L
+            while (true) {
+                val n = input.read(buffer)
+                if (n < 0) break
+                digest.update(buffer, 0, n)
+                out.write(buffer, 0, n)
+                total += n
+            }
+            out.flush()
+            total
+        }
+        return CopyResult(bytes, Checksums.hex(digest.digest()))
+    }
+
     private fun copyStream(input: InputStream, out: OutputStream): Long {
         val buffer = ByteArray(32 * 1024)
         var total = 0L
@@ -85,6 +111,8 @@ class ApkStore(private val root: File) {
     companion object {
         private val BUILD_ID = Regex("^[A-Za-z0-9_-]{1,64}$")
         private val FILE_NAME = Regex("^[A-Za-z0-9._-]{1,120}$")
+
+        fun validBuildId(id: String): Boolean = BUILD_ID.matches(id)
 
         fun validFileName(name: String): Boolean = FILE_NAME.matches(name) && !name.contains("..")
     }

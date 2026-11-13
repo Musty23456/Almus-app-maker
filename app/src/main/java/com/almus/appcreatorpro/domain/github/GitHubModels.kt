@@ -83,6 +83,12 @@ data class GitHubRepo(
     val canPush: Boolean,
     val htmlUrl: String,
     val description: String? = null,
+    /** Phase 28 (repository information). All optional: GitHub may not send them, and older code never sets them. */
+    val language: String? = null,
+    val stars: Int? = null,
+    /** ISO time of the last push, as GitHub reports it. */
+    val updatedAtIso: String? = null,
+    val sizeKb: Long? = null,
 ) {
     val fullName: String get() = "$owner/$name"
 }

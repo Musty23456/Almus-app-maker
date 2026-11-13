@@ -20,3 +20,6 @@ What it does: signs users in with an access code, hands out 1-hour session token
 removes secret-looking text from prompts, applies reviewed task instructions (chat, explain, generate/edit code, plan/generate/edit
 project, debug, review), calls Gemini with retries and timeouts, streams answers (Server-Sent Events) and turns every failure into
 a clear, key-free error. It never logs prompts, answers, tokens, access codes or the API key.
+
+## Tasks added in Phase 22
+`debug` now returns the eight-section diagnosis; `debug_followup` answers follow-up questions about a diagnosed error (JSON). Both follow evidence-only rules.

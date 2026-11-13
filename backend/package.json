@@ -1,6 +1,6 @@
 {
   "name": "almus-ai-backend",
-  "version": "0.20.0",
+  "version": "0.22.0",
   "description": "ALMUS APP CREATOR - secure Gemini proxy (keeps the Gemini API key off the phone)",
   "private": true,
   "type": "commonjs",
@@ -8,7 +8,7 @@
   "engines": { "node": ">=18.17" },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test test/unit.test.js test/api.test.js test/phase10.test.js test/phase13.test.js test/phase20.test.js"
+    "test": "node --test test/unit.test.js test/api.test.js test/phase10.test.js test/phase13.test.js test/phase20.test.js test/phase22.test.js"
   },
   "dependencies": {}
 }

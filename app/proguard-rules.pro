@@ -13,3 +13,13 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+
+# Phase 27: JGit loads its message bundles by reflection and references desktop-only classes. Never run in a release build.
+-keep class org.eclipse.jgit.internal.JGitText { *; }
+-keep class org.eclipse.jgit.internal.storage.file.** { *; }
+-keepclassmembers class * extends org.eclipse.jgit.nls.TranslationBundle { *; }
+-dontwarn org.eclipse.jgit.**
+-dontwarn org.slf4j.**
+-dontwarn javax.management.**
+-dontwarn java.lang.management.**
+-dontwarn com.googlecode.javaewah.**

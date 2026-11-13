@@ -24,6 +24,14 @@ object Routes {
     const val ARTIFACTS = "artifacts"
     const val BACKUPS = "backups/{projectId}"
 
+    /** Phase 27: Git for one project, and "clone a repository into a new project". */
+    const val GIT = "git/{projectId}"
+    const val GIT_CLONE = "gitclone"
+
+    /** Phase 28: "My GitHub Projects" (browse, import) and the AI workspace of one imported repository. */
+    const val GH_PROJECTS = "ghprojects"
+    const val WORKSPACE = "workspace/{workspaceId}"
+
     /** Phase 9: AI assistant for one project, AI settings (backend address) and "generate an app from a description". */
     const val AI = "ai/{projectId}"
     const val AI_SETTINGS = "aisettings"
@@ -51,5 +59,7 @@ object Routes {
     fun cloudBuild(projectId: String) = "cloudbuild/$projectId"
     fun buildStatus(buildId: String) = "build/$buildId"
     fun buildConfig(projectId: String) = "buildconfig/$projectId"
+    fun workspace(workspaceId: String) = "workspace/${RouteArgs.encode(workspaceId)}"
+    fun git(projectId: String) = "git/${RouteArgs.encode(projectId)}"
     fun backups(projectId: String?) = "backups/${projectId ?: ALL_BACKUPS}"
 }

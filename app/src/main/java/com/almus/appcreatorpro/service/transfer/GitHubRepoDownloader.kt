@@ -44,9 +44,16 @@ class GitHubRepoDownloader(
         ref: String,
         target: File,
         onProgress: (TransferProgress) -> Unit = {},
+        /**
+         * Phase 28: true lets a PUBLIC repository be downloaded without a sign-in (the request then carries no
+         * Authorization header at all). Default false: every existing caller still needs a sign-in.
+         */
+        allowAnonymous: Boolean = false,
     ) {
         val token = tokenProvider.token()?.takeIf { it.isNotBlank() }
-            ?: throw TransferException(Kind.AUTH, "You are not signed in to GitHub. Connect GitHub first.")
+        if (token == null && !allowAnonymous) {
+            throw TransferException(Kind.AUTH, "You are not signed in to GitHub. Connect GitHub first.")
+        }
         try {
             fetch(owner, repo, ref, token, target, onProgress)
         } catch (e: Throwable) {
@@ -55,7 +62,7 @@ class GitHubRepoDownloader(
         }
     }
 
-    private suspend fun fetch(owner: String, repo: String, ref: String, token: String, target: File, onProgress: (TransferProgress) -> Unit) {
+    private suspend fun fetch(owner: String, repo: String, ref: String, token: String?, target: File, onProgress: (TransferProgress) -> Unit) {
         val firstUrl = "$baseUrl/repos/${enc(owner)}/${enc(repo)}/zipball/${encPath(ref)}"
         var next: String? = null
         var done = false
@@ -158,12 +165,15 @@ class GitHubRepoDownloader(
         throw TransferException(Kind.NETWORK, "Could not reach GitHub. Check your internet connection.", e)
     }
 
-    private fun apiHeaders(token: String) = mapOf(
-        "Accept" to "application/vnd.github+json",
-        "Authorization" to "Bearer $token",
-        "X-GitHub-Api-Version" to API_VERSION,
-        "User-Agent" to USER_AGENT,
-    )
+    private fun apiHeaders(token: String?): Map<String, String> {
+        val headers = linkedMapOf(
+            "Accept" to "application/vnd.github+json",
+            "X-GitHub-Api-Version" to API_VERSION,
+            "User-Agent" to USER_AGENT,
+        )
+        if (token != null) headers["Authorization"] = "Bearer $token"
+        return headers
+    }
 
     private fun apiError(r: StreamResponse): TransferException = when {
         r.code == 401 -> {

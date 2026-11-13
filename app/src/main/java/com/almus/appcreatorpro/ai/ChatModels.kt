@@ -10,6 +10,8 @@ import com.almus.appcreatorpro.service.github.str
 
 /** What the user wants from the chat. Each mode is a backend task with its own instructions. */
 enum class ChatMode(val label: String, val task: AiTaskKind, val hint: String) {
+    /** Phase 24: the assistant works out what is wanted (explain, generate, fix, optimize, refactor...) from plain English or Hausa. */
+    AUTO("Smart", AiTaskKind.CHAT, "Say what you need, in English or Hausa"),
     ASK("Ask", AiTaskKind.CHAT, "Ask anything about your app or Android"),
     EXPLAIN("Explain code", AiTaskKind.EXPLAIN, "Attach files or paste code to explain"),
     GENERATE("Generate code", AiTaskKind.GENERATE_CODE, "Describe the code to write"),
@@ -30,6 +32,12 @@ data class ChatTurn(
     val contextPaths: List<String> = emptyList(),
     val createdAtMillis: Long = 0L,
     val model: String? = null,
+    /** Phase 24, on an answer in Smart mode: what the assistant understood the request to be. */
+    val intent: CodingIntent? = null,
+    /** Phase 24, on an answer in Smart mode: the language it answered in. */
+    val language: ChatLanguage? = null,
+    /** Phase 24, on a question: [contextPaths] were carried over from the previous exchange (the user did not attach them). */
+    val inheritedContext: Boolean = false,
 )
 
 data class ChatState(val turns: List<ChatTurn> = emptyList(), val busy: Boolean = false, val notice: String? = null)
@@ -56,6 +64,7 @@ object ChatTurns {
                 mapOf(
                     "id" to t.id, "role" to t.role.wire, "text" to t.text, "state" to t.state.name, "error" to t.error,
                     "retryable" to t.retryable, "mode" to t.mode?.name, "paths" to t.contextPaths, "at" to t.createdAtMillis, "model" to t.model,
+                    "intent" to t.intent?.name, "lang" to t.language?.name, "inherited" to t.inheritedContext,
                 )
             },
         ),
@@ -77,6 +86,9 @@ object ChatTurns {
                 contextPaths = o.arr("paths").orEmpty().mapNotNull { it as? String },
                 createdAtMillis = o.long("at") ?: 0L,
                 model = o.str("model"),
+                intent = CodingIntent.entries.firstOrNull { it.name == o.str("intent") },
+                language = ChatLanguage.entries.firstOrNull { it.name == o.str("lang") },
+                inheritedContext = o.bool("inherited") ?: false,
             )
         }
 }
@@ -90,7 +102,7 @@ object ChatMessageBuilder {
      * win when the budget is short, same-role neighbours are merged, and the file context is attached only to the last
      * user message (old file contents are not sent again with every question).
      */
-    fun build(turns: List<ChatTurn>, latestContext: String?): List<AiMessage> {
+    fun build(turns: List<ChatTurn>, latestContext: String?, latestPrefix: String? = null): List<AiMessage> {
         val usable = turns.filterIndexed { i, t ->
             i == turns.lastIndex || t.role == AiRole.USER || (t.state == TurnState.DONE && t.text.isNotBlank())
         }
@@ -108,6 +120,8 @@ object ChatMessageBuilder {
         val out = ArrayList<AiMessage>()
         picked.forEachIndexed { i, t ->
             var content = t.text
+            // Phase 24: the instruction block goes in front of the LAST user message only; earlier turns are sent as the user saw them.
+            if (i == picked.lastIndex && !latestPrefix.isNullOrBlank() && t.role == AiRole.USER) content = latestPrefix + "\n\n" + CodingPrompts.REQUEST_MARKER + "\n" + content
             if (i == picked.lastIndex && !latestContext.isNullOrBlank()) content = content + "\n\n" + latestContext
             val last = out.lastOrNull()
             if (last != null && last.role == t.role) out[out.lastIndex] = last.copy(content = last.content + "\n\n" + content)
@@ -194,14 +208,25 @@ object ChatMarkdown {
 
 /** "Apply to file" for chat answers: the code block becomes a reviewable change, never a silent overwrite. */
 object ChatApply {
+    /** A first line such as `// File: app/src/Foo.kt`, `# File: x.py` or `<!-- File: res/layout/a.xml -->` names the file of the block. */
+    private val inlineHeader = Regex("""^\s*(?://|#|--|/\*|<!--)\s*(?:file|path)\s*:\s*`?([\w./\-]+)`?\s*(?:\*/|-->)?\s*$""", RegexOption.IGNORE_CASE)
+
     suspend fun changeSet(turn: ChatTurn, files: AiProjectFiles, nowMillis: Long): ResolveResult? {
         val blocks = ChatMarkdown.split(turn.text).filterIsInstance<ChatMarkdown.Block.Code>().filter { it.closed && it.code.isNotBlank() }
         if (blocks.isEmpty()) return null
         val single = turn.contextPaths.singleOrNull()
+        val known = files.list().toHashSet()
         val changes = ArrayList<RawChange>()
         for ((i, b) in blocks.withIndex()) {
-            val target = b.path ?: if (i == 0) single else null
-            if (target != null) changes += RawChange(target, "modify", "From the AI chat", b.code.trimEnd('\n') + "\n", emptyList())
+            var code = b.code
+            var target = b.path
+            if (target == null) {
+                val header = inlineHeader.find(code.lineSequence().first())
+                if (header != null) { target = header.groupValues[1]; code = code.lines().drop(1).joinToString("\n") }
+            }
+            if (target == null && i == 0) target = single
+            if (target == null || code.isBlank()) continue
+            changes += RawChange(target, if (target in known) "modify" else "create", "From the AI chat", code.trimEnd('\n') + "\n", emptyList())
         }
         if (changes.isEmpty()) return null
         return ChangeResolver.fromProposal(EditProposal("From the AI chat", changes), files, "AI chat change", nowMillis)

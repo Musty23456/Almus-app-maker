@@ -282,7 +282,7 @@ class FileProjectStore(
         val sourceDir = sourceDirOf(projectId)
         if (!sourceDir.isDirectory) return@io emptyList()
         sourceDir.walkTopDown()
-            .filter { it.isFile && !it.name.endsWith(FilePathValidator.RESERVED_SUFFIX) }
+            .filter { it.isFile && !it.name.endsWith(FilePathValidator.RESERVED_SUFFIX) && !(it.name == ".git" && it.parentFile == sourceDir) } // Phase 27: JGit may leave a ".git" pointer file
             .map { SourceFileEntry(it.relativeTo(sourceDir).invariantSeparatorsPath, it.length()) }
             .sortedBy { it.path.lowercase() }
             .toList()

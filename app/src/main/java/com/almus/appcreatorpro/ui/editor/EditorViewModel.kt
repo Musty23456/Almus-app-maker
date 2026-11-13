@@ -15,6 +15,18 @@ import com.almus.appcreatorpro.editor.EditorValue
 import com.almus.appcreatorpro.editor.FindEngine
 import com.almus.appcreatorpro.editor.Language
 import com.almus.appcreatorpro.editor.UndoHistory
+import com.almus.appcreatorpro.explorer.DeletePlan
+import com.almus.appcreatorpro.explorer.ExplorerOperations
+import com.almus.appcreatorpro.explorer.ExplorerSort
+import com.almus.appcreatorpro.explorer.FilePreview
+import com.almus.appcreatorpro.explorer.FilePreviewBuilder
+import com.almus.appcreatorpro.explorer.FileTypes
+import com.almus.appcreatorpro.explorer.InMemoryRecentFilesStore
+import com.almus.appcreatorpro.explorer.OpResult
+import com.almus.appcreatorpro.explorer.PathOps
+import com.almus.appcreatorpro.explorer.ProtectedFiles
+import com.almus.appcreatorpro.explorer.RecentFiles
+import com.almus.appcreatorpro.explorer.RecentFilesStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -51,6 +63,17 @@ data class FindState(
 
 data class EditorMessage(val id: Long, val text: String, val isError: Boolean)
 
+/** Phase 25: the preview sheet. Exactly one of [preview] / [error] is set once [loading] is false. */
+data class PreviewUi(
+    val path: String,
+    val loading: Boolean = true,
+    val preview: FilePreview? = null,
+    val error: String? = null,
+)
+
+/** Phase 25: a rename/move of important file(s) waiting for the user's OK. Nothing has been changed yet. */
+data class PendingProtectedRename(val from: String, val to: String, val isFolder: Boolean, val message: String)
+
 data class EditorUiState(
     val isLoading: Boolean = true,
     val loadError: String? = null,
@@ -61,6 +84,15 @@ data class EditorUiState(
     val collapsedFolders: Set<String> = emptySet(),
     val savingPaths: Set<String> = emptySet(),
     val find: FindState = FindState(),
+    // ---- Phase 25: project explorer
+    val searchQuery: String = "",
+    val sort: ExplorerSort = ExplorerSort.NAME,
+    /** Most recently opened files of this project, newest first. */
+    val recentFiles: List<String> = emptyList(),
+    val preview: PreviewUi? = null,
+    /** A delete waiting for confirmation (typed confirmation when important files are inside). */
+    val pendingDelete: DeletePlan? = null,
+    val pendingProtectedRename: PendingProtectedRename? = null,
 ) {
     val activeFile: OpenFile? get() = openFiles.firstOrNull { it.path == activePath }
     val hasUnsavedChanges: Boolean get() = openFiles.any { it.isDirty }
@@ -75,7 +107,12 @@ class EditorViewModel(
     private val projectId: String,
     private val projects: ProjectRepository,
     private val files: SourceFileRepository,
+    /** Phase 25: remembers recently opened files. Optional so older callers compile unchanged. */
+    private val recentStore: RecentFilesStore = InMemoryRecentFilesStore(),
 ) : ViewModel() {
+
+    private val ops = ExplorerOperations(projectId, files)
+    private var recent = RecentFiles()
 
     private val _state = MutableStateFlow(EditorUiState())
     val state: StateFlow<EditorUiState> = _state.asStateFlow()
@@ -100,7 +137,8 @@ class EditorViewModel(
                 val project = projects.getProject(projectId)
                     ?: throw StorageException(StorageException.Kind.NOT_FOUND, "This project no longer exists.")
                 val list = files.listFiles(projectId)
-                _state.update { it.copy(isLoading = false, project = project, files = list) }
+                recent = recentStore.load(projectId).pruned(list.map { it.path }.toSet())
+                _state.update { it.copy(isLoading = false, project = project, files = list, recentFiles = recent.paths) }
                 if (_state.value.openFiles.isEmpty()) {
                     val wanted = ProjectTemplates.defaultOpenFile(project.type, project.packageName)
                     val first = list.firstOrNull { it.path == wanted }?.path ?: list.firstOrNull()?.path
@@ -123,6 +161,7 @@ class EditorViewModel(
     private suspend fun openFileInternal(path: String) {
         if (_state.value.openFiles.any { it.path == path }) {
             _state.update { it.copy(activePath = path) }
+            touchRecent(path)
             return
         }
         try {
@@ -138,6 +177,7 @@ class EditorViewModel(
                     )
                 }
             }
+            touchRecent(path)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -316,36 +356,116 @@ class EditorViewModel(
     // ------------------------------------------------------------------ file operations
 
     fun createFile(path: String) {
-        val clean = path.trim()
         viewModelScope.launch {
-            try {
-                files.createFile(projectId, clean, "")
-                refreshFiles()
-                openFileInternal(clean)
-                post("Created $clean", isError = false)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                post(e.toUserMessage(), isError = true)
-            }
-        }
-    }
-
-    /** Renames or moves a file. An open (even modified) buffer follows the file to its new path. */
-    fun renameFile(from: String, to: String) {
-        val target = to.trim()
-        viewModelScope.launch {
-            try {
-                files.renameFile(projectId, from, target)
-                _state.update { s ->
-                    s.copy(
-                        openFiles = s.openFiles.map { if (it.path == from) it.copy(path = target) else it },
-                        activePath = if (s.activePath == from) target else s.activePath,
-                    )
+            when (val r = ops.createFile(path)) {
+                is OpResult.Done -> {
+                    refreshFiles()
+                    r.created?.let { openFileInternal(it) }
+                    post(r.message, isError = false)
                 }
-                histories.remove(from)?.let { histories[target] = it }
+                is OpResult.Failed -> post(r.message, isError = true)
+                is OpResult.NeedsConfirmation -> post(r.message, isError = true)
+            }
+        }
+    }
+
+    /** Phase 25: a new folder (kept alive by an empty .gitkeep file, because folders only exist while they hold a file). */
+    fun createFolder(path: String) {
+        viewModelScope.launch {
+            when (val r = ops.createFolder(path)) {
+                is OpResult.Done -> {
+                    refreshFiles()
+                    post(r.message, isError = false)
+                }
+                is OpResult.Failed -> post(r.message, isError = true)
+                is OpResult.NeedsConfirmation -> post(r.message, isError = true)
+            }
+        }
+    }
+
+    /**
+     * Renames or moves a file. An open (even modified) buffer follows the file to its new path. Important
+     * configuration files are not touched until the user confirms ([confirmProtectedRename]).
+     */
+    fun renameFile(from: String, to: String) {
+        viewModelScope.launch { runRename(from, to, isFolder = false, confirmed = false) }
+    }
+
+    /** Phase 25: renames or moves a whole folder (open tabs inside it follow). */
+    fun renameFolder(from: String, to: String) {
+        viewModelScope.launch { runRename(from, to, isFolder = true, confirmed = false) }
+    }
+
+    fun confirmProtectedRename() {
+        val pending = _state.value.pendingProtectedRename ?: return
+        _state.update { it.copy(pendingProtectedRename = null) }
+        viewModelScope.launch { runRename(pending.from, pending.to, pending.isFolder, confirmed = true) }
+    }
+
+    fun cancelProtectedRename() {
+        _state.update { it.copy(pendingProtectedRename = null) }
+    }
+
+    private suspend fun runRename(from: String, to: String, isFolder: Boolean, confirmed: Boolean) {
+        val r = if (isFolder) ops.renameFolder(from, to, confirmed) else ops.rename(from, to, confirmed)
+        when (r) {
+            is OpResult.Done -> {
+                applyMoves(r.moved, folderFrom = if (isFolder) PathOps.normalizeInput(from).trimEnd('/') else null,
+                    folderTo = if (isFolder) PathOps.normalizeInput(to).trimEnd('/') else null)
                 refreshFiles()
-                post("Renamed to $target", isError = false)
+                post(r.message, isError = false)
+            }
+            is OpResult.Failed -> post(r.message, isError = true)
+            is OpResult.NeedsConfirmation ->
+                _state.update { it.copy(pendingProtectedRename = PendingProtectedRename(from, to, isFolder, r.message)) }
+        }
+    }
+
+    /** Open tabs, undo histories and the recent list follow files that moved. */
+    private fun applyMoves(moved: Map<String, String>, folderFrom: String?, folderTo: String?) {
+        if (moved.isEmpty()) return
+        _state.update { s ->
+            s.copy(
+                openFiles = s.openFiles.map { f -> moved[f.path]?.let { f.copy(path = it) } ?: f },
+                activePath = s.activePath?.let { moved[it] ?: it },
+            )
+        }
+        for ((old, new) in moved) histories.remove(old)?.let { histories[new] = it }
+        recent = if (folderFrom != null && folderTo != null) recent.renamedUnder(folderFrom, folderTo)
+        else moved.entries.fold(recent) { acc, e -> acc.renamed(e.key, e.value) }
+        saveRecent()
+    }
+
+    /**
+     * Deletes one file. Important configuration files are refused here: they only go through
+     * [requestDelete] / [confirmDelete], which makes the user type the file name.
+     */
+    fun deleteFile(path: String) {
+        if (ProtectedFiles.isProtected(path)) {
+            post("\"${path.substringAfterLast('/')}\" is an important file. Use Delete in the explorer and type its name to confirm.", isError = true)
+            return
+        }
+        viewModelScope.launch {
+            val plan = ops.planDelete(path, isFolder = false)
+            if (plan == null) {
+                post("'$path' no longer exists.", isError = true)
+                return@launch
+            }
+            finishDelete(ops.delete(plan, null))
+        }
+    }
+
+    /** Phase 25: starts a delete. The UI shows [EditorUiState.pendingDelete] and calls [confirmDelete] or [cancelDelete]. */
+    fun requestDelete(path: String, isFolder: Boolean) {
+        viewModelScope.launch {
+            try {
+                val plan = ops.planDelete(path, isFolder)
+                if (plan == null) {
+                    post("'$path' no longer exists.", isError = true)
+                    return@launch
+                }
+                val dirty = _state.value.openFiles.filter { it.isDirty && it.path in plan.files }.map { it.path }
+                _state.update { it.copy(pendingDelete = plan.copy(unsaved = dirty)) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -354,17 +474,49 @@ class EditorViewModel(
         }
     }
 
-    fun deleteFile(path: String) {
+    fun confirmDelete(typedConfirmation: String? = null) {
+        val plan = _state.value.pendingDelete ?: return
         viewModelScope.launch {
-            try {
-                files.deleteFile(projectId, path)
-                closeFile(path)
+            val r = ops.delete(plan, typedConfirmation)
+            // A wrong typed confirmation keeps the dialog open so the user can try again.
+            if (r is OpResult.Failed && plan.needsTypedConfirmation && typedConfirmation?.trim() != plan.confirmationWord) {
+                post(r.message, isError = true)
+                return@launch
+            }
+            _state.update { it.copy(pendingDelete = null) }
+            finishDelete(r)
+        }
+    }
+
+    fun cancelDelete() {
+        _state.update { it.copy(pendingDelete = null) }
+    }
+
+    private suspend fun finishDelete(r: OpResult) {
+        when (r) {
+            is OpResult.Done -> {
+                for (p in r.deleted) closeFile(p)
+                recent = r.deleted.fold(recent) { acc, p -> acc.removed(p) }
+                saveRecent()
                 refreshFiles()
-                post("Deleted ${path.substringAfterLast('/')}", isError = false)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                post(e.toUserMessage(), isError = true)
+                post(r.message, isError = false)
+            }
+            is OpResult.Failed -> post(r.message, isError = true)
+            is OpResult.NeedsConfirmation -> post(r.message, isError = true)
+        }
+    }
+
+    /** Phase 25: copies a file next to the original as "Name copy.ext" (never overwrites) and opens the copy. */
+    fun duplicateFile(path: String) {
+        viewModelScope.launch {
+            when (val r = ops.duplicate(path)) {
+                is OpResult.Done -> {
+                    refreshFiles()
+                    r.created?.let { openFileInternal(it) }
+                    post(r.message, isError = false)
+                }
+                is OpResult.Failed -> post(r.message, isError = true)
+                is OpResult.NeedsConfirmation -> post(r.message, isError = true)
             }
         }
     }
@@ -386,6 +538,11 @@ class EditorViewModel(
     private suspend fun refreshFiles() {
         val list = files.listFiles(projectId)
         _state.update { it.copy(files = list) }
+        val pruned = recent.pruned(list.map { it.path }.toSet())
+        if (pruned != recent) {
+            recent = pruned
+            saveRecent()
+        }
     }
 
     // ------------------------------------------------------------------ find & replace
@@ -467,6 +624,64 @@ class EditorViewModel(
         val text = s.activeFile?.value?.text.orEmpty()
         val count = FindEngine.findAll(text, s.find.query, s.find.caseSensitive).size
         _state.update { it.copy(find = it.find.copy(matchCount = count)) }
+    }
+
+    // ------------------------------------------------------------------ explorer: search, sort, recent, preview
+
+    fun setSearchQuery(query: String) {
+        _state.update { it.copy(searchQuery = query) }
+    }
+
+    fun setSort(sort: ExplorerSort) {
+        _state.update { it.copy(sort = sort) }
+    }
+
+    fun clearRecent() {
+        recent = RecentFiles()
+        saveRecent()
+    }
+
+    private fun touchRecent(path: String) {
+        recent = recent.touched(path)
+        saveRecent()
+    }
+
+    private fun saveRecent() {
+        _state.update { it.copy(recentFiles = recent.paths) }
+        try {
+            recentStore.save(projectId, recent)
+        } catch (e: Exception) {
+            // The recent list is a convenience; failing to remember it must never break the editor.
+        }
+    }
+
+    /** Reads the file and shows it read-only. Open files show their current (possibly unsaved) text. */
+    fun previewFile(path: String) {
+        _state.update { it.copy(preview = PreviewUi(path)) }
+        viewModelScope.launch {
+            val size = _state.value.files.firstOrNull { it.path == path }?.sizeBytes ?: 0L
+            val result: PreviewUi = try {
+                if (FileTypes.isBinary(path)) {
+                    PreviewUi(path, loading = false, preview = FilePreviewBuilder.unavailable(path, size, "Binary file: there is no text to preview."))
+                } else if (size > SourceFileRepository.MAX_FILE_BYTES) {
+                    PreviewUi(path, loading = false, preview = FilePreviewBuilder.unavailable(path, size, "Too large to preview (limit ${SourceFileRepository.MAX_FILE_BYTES / 1024} KB)."))
+                } else {
+                    val open = _state.value.openFiles.firstOrNull { it.path == path }
+                    val text = open?.value?.text ?: files.readFile(projectId, path)
+                    PreviewUi(path, loading = false, preview = FilePreviewBuilder.build(path, text, size))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                PreviewUi(path, loading = false, error = e.toUserMessage())
+            }
+            // Ignore the answer if the user closed the sheet or asked for another file meanwhile.
+            _state.update { if (it.preview?.path == path) it.copy(preview = result) else it }
+        }
+    }
+
+    fun closePreview() {
+        _state.update { it.copy(preview = null) }
     }
 
     // ------------------------------------------------------------------ messages & helpers

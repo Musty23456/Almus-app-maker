@@ -45,7 +45,12 @@ class AiProjectSession(
     private val contextBuilder = ProjectContextBuilder(files)
     private val ops = AiOperations(backend, clockMillis)
 
-    val chat = ChatEngine(projectId, backend, chatHistory, contextFor = { paths -> contextBuilder.build(projectName, projectType, paths, includeStructure = true) }, scope = scope, clockMillis = clockMillis)
+    private val profileProvider = ProjectProfileProvider(files, projectName, projectType, clockMillis)
+
+    val chat = ChatEngine(
+        projectId, backend, chatHistory, contextFor = { paths -> contextBuilder.build(projectName, projectType, paths, includeStructure = true) },
+        scope = scope, clockMillis = clockMillis, assistant = ChatAssistant.forProject(profileProvider, files),
+    )
     val changes = AiChangeManager(projectId, files, changeHistory, clockMillis)
 
     private val _edit = MutableStateFlow<EditFlow>(EditFlow.Idle)
@@ -62,6 +67,9 @@ class AiProjectSession(
         chat.load()
         changes.load()
     }
+
+    /** Phase 24: what the assistant knows about the project (language, toolkit, architecture, conventions). Read locally, cached briefly. */
+    suspend fun projectProfile(): ProjectProfile = profileProvider.profile()
 
     /** Files the user may attach or select (text files, no build output, no credential files). */
     suspend fun selectablePaths(): List<String> =

@@ -123,6 +123,21 @@ class FixManager(private val files: ProjectFileAccess) {
         UndoResult.Undone(last.proposal)
     }
 
+    /**
+     * Phase 23: the repair engine wrote the files of these suggestions (and keeps its own record and rollback), so they
+     * are shown as applied here too. They are not added to this list's undo history.
+     */
+    fun markApplied(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        _entries.update { list -> list.map { if (it.proposal.id in ids && it.status == FixStatus.PENDING) it.copy(status = FixStatus.APPLIED) else it } }
+    }
+
+    /** Phase 23: the repair was rolled back, so the suggestions can be looked at again. */
+    fun markPending(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        _entries.update { list -> list.map { if (it.proposal.id in ids && it.status == FixStatus.APPLIED) it.copy(status = FixStatus.PENDING) else it } }
+    }
+
     /** The fix that [undo] would revert next. */
     fun nextUndo(): FixProposal? = history.lastOrNull()?.proposal
 

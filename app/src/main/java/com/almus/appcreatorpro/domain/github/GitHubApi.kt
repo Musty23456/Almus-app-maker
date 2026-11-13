@@ -16,6 +16,14 @@ interface GitHubApi {
 
     suspend fun getRepository(owner: String, name: String): GitHubRepo
 
+    /**
+     * Phase 28: text search over repositories (public ones; GitHub may add private ones the sign-in can see).
+     * The default keeps older implementations (and test fakes) compiling.
+     */
+    suspend fun searchRepositories(text: String, page: Int): RepoPage {
+        throw GitHubException(GitHubException.Kind.UNKNOWN, "Searching repositories is not supported here.")
+    }
+
     suspend fun createRepository(name: String, description: String?, isPrivate: Boolean): GitHubRepo
 
     suspend fun listBranches(owner: String, name: String): List<GitHubBranch>

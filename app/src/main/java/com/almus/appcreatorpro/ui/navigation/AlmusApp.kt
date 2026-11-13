@@ -1,11 +1,16 @@
 package com.almus.appcreatorpro.ui.navigation
 
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import com.almus.appcreatorpro.ui.git.CloneScreen
+import com.almus.appcreatorpro.ui.git.GitScreen
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
@@ -33,9 +38,13 @@ import com.almus.appcreatorpro.ui.home.HomeScreen
 import com.almus.appcreatorpro.ui.projects.ProjectsScreen
 import com.almus.appcreatorpro.ui.settings.SettingsScreen
 import com.almus.appcreatorpro.ui.splash.SplashScreen
+import com.almus.appcreatorpro.ui.theme.Motion
+import com.almus.appcreatorpro.ui.theme.rememberReducedMotion
 import com.almus.appcreatorpro.ui.transfer.BackupsScreen
 import com.almus.appcreatorpro.ui.transfer.ImportScreen
 import com.almus.appcreatorpro.ui.welcome.WelcomeScreen
+import com.almus.appcreatorpro.ui.workspace.MyGitHubProjectsScreen
+import com.almus.appcreatorpro.ui.workspace.RepoWorkspaceScreen
 
 /** Root composable: owns the navigation graph. Bottom bar is shown by the three main screens. */
 @Composable
@@ -64,7 +73,19 @@ fun AlmusApp(
         }
     }
 
-    NavHost(navController = navController, startDestination = Routes.SPLASH) {
+    // UI redesign: one short cross-fade for every screen change (cheap: only alpha changes). Off when the user removed animations.
+    val reducedMotion = rememberReducedMotion()
+    val fadeInSpec = tween<Float>(durationMillis = Motion.duration(Motion.Standard, reducedMotion))
+    val fadeOutSpec = tween<Float>(durationMillis = Motion.duration(Motion.Fast, reducedMotion))
+
+    NavHost(
+        navController = navController,
+        startDestination = Routes.SPLASH,
+        enterTransition = { fadeIn(animationSpec = fadeInSpec) },
+        exitTransition = { fadeOut(animationSpec = fadeOutSpec) },
+        popEnterTransition = { fadeIn(animationSpec = fadeInSpec) },
+        popExitTransition = { fadeOut(animationSpec = fadeOutSpec) },
+    ) {
         composable(Routes.SPLASH) {
             SplashScreen(
                 onFinished = {
@@ -92,6 +113,8 @@ fun AlmusApp(
                 onOpenBuildHistory = { navController.navigate(Routes.DASHBOARD) },
                 onOpenGitHub = { navController.navigate(Routes.GITHUB) },
                 onOpenCloudBuild = { id -> navController.navigate(Routes.cloudBuild(id)) },
+                onOpenGitHubProjects = { navController.navigate(Routes.GH_PROJECTS) },
+                onGenerateWithAi = { navController.navigate(Routes.AI_GENERATE) },
                 bottomBar = { AlmusBottomBar(currentRoute = Routes.HOME, onNavigate = navigateTopLevel) },
             )
         }
@@ -103,6 +126,8 @@ fun AlmusApp(
                 onImport = { navController.navigate(Routes.IMPORT) },
                 onBackups = { id -> navController.navigate(Routes.backups(id)) },
                 onGenerateWithAi = { navController.navigate(Routes.AI_GENERATE) },
+                onClone = { navController.navigate(Routes.GIT_CLONE) },
+                onGitHubProjects = { navController.navigate(Routes.GH_PROJECTS) },
             )
         }
         composable(Routes.SETTINGS) {
@@ -145,6 +170,7 @@ fun AlmusApp(
                 onOpenDebug = { navController.navigate(Routes.debug(editorProjectId)) },
                 onOpenAi = { navController.navigate(Routes.ai(editorProjectId)) },
                 onOpenPreview = { navController.navigate(Routes.preview(editorProjectId)) },
+                onOpenGit = { navController.navigate(Routes.git(editorProjectId)) },
             )
         }
         composable(
@@ -220,6 +246,50 @@ fun AlmusApp(
                     // Open the file in the editor. The editor saved its files before opening this screen, and re-reads changed files when it resumes.
                     navController.navigate(Routes.editorAt(debugProjectId, path, line, col)) { launchSingleTop = true }
                 },
+                // Phase 23: after a repair is applied the user starts a new cloud build here; the app never starts one by itself.
+                onRebuild = { navController.navigate(Routes.cloudBuild(debugProjectId)) },
+            )
+        }
+        composable(
+            route = Routes.GIT,
+            arguments = listOf(navArgument("projectId") { type = NavType.StringType }),
+        ) { entry ->
+            val gitProjectId = entry.arguments?.getString("projectId").orEmpty()
+            GitScreen(
+                projectId = gitProjectId,
+                onBack = { navController.popBackStack() },
+                // The editor re-reads changed files when it resumes, so conflicts/merges shown there are current.
+                onOpenFile = { path -> navController.navigate(Routes.editorAt(gitProjectId, path, null, null)) { launchSingleTop = true } },
+                onOpenGitHub = { navController.navigate(Routes.GITHUB) },
+            )
+        }
+        composable(Routes.GH_PROJECTS) {
+            MyGitHubProjectsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenWorkspace = { id -> navController.navigate(Routes.workspace(id)) },
+                onOpenGitHub = { navController.navigate(Routes.GITHUB) },
+            )
+        }
+        composable(
+            route = Routes.WORKSPACE,
+            arguments = listOf(navArgument("workspaceId") { type = NavType.StringType }),
+        ) { entry ->
+            val workspaceId = entry.arguments?.getString("workspaceId").orEmpty()
+            RepoWorkspaceScreen(
+                workspaceId = workspaceId,
+                onBack = { navController.popBackStack() },
+                // Project switching: replace this screen so Back does not walk through every workspace.
+                onSwitchWorkspace = { id -> navController.navigate(Routes.workspace(id)) { popUpTo(Routes.WORKSPACE) { inclusive = true } } },
+                onOpenProjects = { navController.navigate(Routes.GH_PROJECTS) { popUpTo(Routes.GH_PROJECTS) { inclusive = true } } },
+                onOpenEditor = { id -> navController.navigate(Routes.editor(id)) },
+                onOpenAgent = { id -> navController.navigate(Routes.agent(id)) },
+                onOpenSettings = { navController.navigate(Routes.AI_SETTINGS) },
+            )
+        }
+        composable(Routes.GIT_CLONE) {
+            CloneScreen(
+                onBack = { navController.popBackStack() },
+                onOpenProject = { id -> navController.navigate(Routes.editor(id)) { popUpTo(Routes.GIT_CLONE) { inclusive = true } } },
             )
         }
         composable(Routes.IMPORT) {

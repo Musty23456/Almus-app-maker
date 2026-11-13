@@ -23,6 +23,8 @@ class ChatEngine(
     private val scope: CoroutineScope,
     private val clockMillis: () -> Long = { System.currentTimeMillis() },
     private val newId: () -> String = { java.util.UUID.randomUUID().toString() },
+    /** Phase 24: what Smart mode needs to know about the project. Null = Smart mode still works, without a project profile. */
+    private val assistant: ChatAssistant? = null,
 ) {
     private val _state = MutableStateFlow(ChatState())
     val state: StateFlow<ChatState> = _state.asStateFlow()
@@ -66,6 +68,13 @@ class ChatEngine(
 
     fun dismissNotice() { _state.update { it.copy(notice = null) } }
 
+    /** What Smart mode would understand [text] to be, right now (pure and cheap: the UI shows it while the user types). */
+    fun previewIntent(text: String, attachedCount: Int = 0): IntentGuess =
+        IntentDetector.detect(text, attachedCount > 0, FollowUpResolver.lastIntent(_state.value.turns))
+
+    private suspend fun knownPathsOrEmpty(): Set<String> =
+        try { assistant?.knownPaths?.invoke() ?: emptySet() } catch (e: CancellationException) { throw e } catch (e: Exception) { emptySet() }
+
     private fun start(user: ChatTurn) {
         val answerId = newId()
         val mode = user.mode ?: ChatMode.ASK
@@ -77,12 +86,41 @@ class ChatEngine(
 
         job = scope.launch {
             try {
-                val bundle = if (user.contextPaths.isNotEmpty()) contextFor(user.contextPaths) else null
+                var paths = user.contextPaths
+                var guess: IntentGuess? = null
+                var carry: FollowUpResolver.CarryOver? = null
+                var task = mode.task
+                if (mode == ChatMode.AUTO) {
+                    // Phase 24 (Smart mode): understand the request, carry the files of a follow-up over, pick the backend task.
+                    val before = _state.value.turns.takeWhile { it.id != user.id }
+                    val known = knownPathsOrEmpty()
+                    val g = IntentDetector.detect(user.text, paths.isNotEmpty(), FollowUpResolver.lastIntent(before))
+                    val c = FollowUpResolver.carryOver(user.text, before, paths, known, g.intent)
+                    guess = g; carry = c; paths = c.paths
+                    task = IntentRouting.taskFor(g.intent, paths.size)
+                    if (c.inherited.isNotEmpty()) {
+                        _state.update { s -> s.copy(turns = s.turns.map { if (it.id == user.id) it.copy(contextPaths = c.paths, inheritedContext = true) else it }) }
+                    }
+                    patch { it.copy(intent = g.intent, language = g.language) }
+                }
+                val bundle = if (paths.isNotEmpty()) contextFor(paths) else null
+                var prefix: String? = null
+                if (guess != null) {
+                    val profile = try { assistant?.profile?.invoke() } catch (e: CancellationException) { throw e } catch (e: Exception) { null }
+                    prefix = CodingPrompts.build(
+                        CodingRequest(
+                            intent = guess.intent, language = guess.language, profile = profile,
+                            attachedPaths = bundle?.files?.map { it.path } ?: emptyList(), skipped = bundle?.skipped.orEmpty(),
+                            followUp = carry?.isFollowUp == true || FollowUpResolver.isFollowUp(user.text, _state.value.turns.takeWhile { it.id != user.id }, guess.intent),
+                            carriedOver = carry?.inherited.orEmpty(),
+                        ),
+                    )
+                }
                 val visible = _state.value.turns.filter { it.id != answerId }
-                val messages = ChatMessageBuilder.build(visible, bundle?.render())
+                val messages = ChatMessageBuilder.build(visible, bundle?.render(), prefix)
                 var model: String? = null
                 var finishReason: String? = null
-                backend.stream(AiRequest(mode.task, messages)).collect { ev ->
+                backend.stream(AiRequest(task, messages)).collect { ev ->
                     when (ev) {
                         is AiStreamEvent.Started -> model = ev.model
                         is AiStreamEvent.Delta -> patch { it.copy(text = it.text + ev.text) }

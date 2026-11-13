@@ -9,6 +9,14 @@ Phase 3: real GitHub sign-in, repository selection and cloud builds on GitHub Ac
 
 ## Status: what is and is not verified
 
+> **Phase 25 (project explorer, see PHASE25_REPORT.md):** the editor drawer is now a Project Explorer: hierarchical tree with folder totals, file search, new file/folder, rename/move (files and folders), duplicate, delete with confirmation, preview with syntax colors, recent files, file-type badges, a project structure view, and protection for important configuration files. All operations stay inside the project folder. **Nothing in this phase was compiled or run** (no Kotlin compiler here); expect a few compile errors on the first CI run.
+>
+> **Phase 24 (AI coding assistant, see PHASE24_REPORT.md):** new **Smart** chat mode: understands English and Hausa requests (explain, generate, optimize, find bugs, function/class/UI/API generation, refactor, follow-ups), knows the project's language, framework, architecture, dependencies and conventions, suggests next steps, and shows generated code for **review and approval** before it reaches Changes. Backend unchanged; old chat modes unchanged. AI package compiled and 133 tests passed; the Compose screen is **not compiled**.
+
+> **Phase 23 (code repair engine, see PHASE23_REPORT.md):** diagnosed build errors can now become real, reviewable patches: originals are read first, changes are staged (never written),
+> validated, previewed line by line, accepted or rejected **per file**, applied only on your approval, recorded, and can be rolled back. It **never claims an error is fixed**: only a rebuild shows that.
+> **Not compiled or run** (no Kotlin compiler, Gradle or network here): expect to fix compile errors on the first CI run. New tests: `app/src/test/.../repair/`.
+
 > **Phase 10 (verification, see PHASE10_REPORT.md):** this environment again had **no Kotlin compiler, Gradle, Android SDK or network**, so the Android app was **not compiled, not unit-tested and not linted** in Phase 10. Nothing in Phases 6-9 has been proven to compile. What *was* run: the backend suite (**35/35 tests pass**, 5 of them new, with mutation checks on 3 of the 5), an offline consistency check over all 256 Kotlin files (`python3 scripts/verify_offline.py .`, which is **not** a compiler) and a YAML parse of all workflows. Changes: stray ProGuard file merged into the real one, version 0.10.0 (code 11), and a new independent `checks` CI job. **The first green GitHub Actions run (`gradle testDebugUnitTest assembleDebug`) is still the only real proof that the app builds.**
 
 > **Phase 11 (advanced editor, see PHASE11_REPORT.md):** adds an editor ENGINE layer (13 new Kotlin files, 121 new unit tests) and five new
@@ -538,3 +546,15 @@ Describe an app or a change; the agent plans, you approve the plan, it works in 
 ## Phase 20: live preview
 
 Editor menu, Live preview. Web pages run in a sandboxed WebView (no network by default, no access to your files). Android XML and Compose are drawn as labelled approximations, not the Android runtime. See PHASE20_REPORT.md (the new Kotlin is uncompiled and its tests have not been run; the backend tests pass).
+
+## Phase 22 - Advanced error diagnosis
+The debug screen has a Diagnosis tab (root cause vs secondary errors, affected files, explanation, solution, confidence) with optional AI diagnosis and follow-up questions. See `PHASE22_REPORT.md`.
+
+## Phase 27 - Git integration
+Manage Git repositories inside a project: **Editor menu -> Git** (status, stage/unstage, commit, history, branches, merge, conflicts,
+fetch/pull/push, remote and author settings) and **Projects -> menu -> Clone repository** (creates a new project with full history).
+
+- Engine: JGit (`git/JGitEngine.kt`). The work tree is the project's `files/` folder; the repository data lives in `<project>/git/`, so Git never adds files to the project, to exports or to cloud-build uploads.
+- GitHub sign-in is reused (`GitHubTokenCredentialSource`). The token is read from the encrypted store per network call, handed out **only for https://github.com**, pinned to that host (no redirect can receive it), never written to the repository config, and scrubbed from every error message.
+- Safety: delete branch, abort merge, take-one-side conflict resolution and push always show a confirmation (unmerged branches: type the branch name). The service enforces it, not only the UI. Push is never forced. Merge/pull start only with no uncommitted tracked changes. Committing keys/passwords/tokens needs an extra confirmation.
+- Tests: `app/src/test/.../git/` (`GitCoreTest`, `JGitEngineTest`, `GitServiceTest`, `GitViewModelTest`) plus one case in `FileProjectStoreTest`. See `PHASE27_REPORT.md` for what was and was not run.

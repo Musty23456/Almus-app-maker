@@ -24,8 +24,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.almus.appcreatorpro.ui.theme.Indigo40
-import com.almus.appcreatorpro.ui.theme.Violet40
+import com.almus.appcreatorpro.ui.theme.BrandStart
+import com.almus.appcreatorpro.ui.theme.BrandEnd
 import kotlinx.coroutines.delay
 
 private const val SPLASH_DURATION_MS = 1400L
@@ -41,7 +41,7 @@ fun SplashScreen(onFinished: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Indigo40, Violet40))),
+            .background(Brush.verticalGradient(listOf(BrandStart, BrandEnd))),
         contentAlignment = Alignment.Center,
     ) {
         Column(

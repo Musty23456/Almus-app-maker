@@ -3,8 +3,13 @@ package com.almus.appcreatorpro.di
 import android.content.Context
 import com.almus.appcreatorpro.data.repository.BuildConfigurationStore
 import com.almus.appcreatorpro.data.repository.CloudBuildConfigStore
-import com.almus.appcreatorpro.service.artifacts.AndroidArtifactInspector
-import com.almus.appcreatorpro.service.artifacts.ArtifactInspector
+import com.almus.appcreatorpro.service.artifacts.AndroidApkPackageReader
+import com.almus.appcreatorpro.service.artifacts.ArtifactAnalyzer
+import com.almus.appcreatorpro.service.artifacts.ArtifactAssessor
+import com.almus.appcreatorpro.service.artifacts.ArtifactCatalog
+import com.almus.appcreatorpro.service.artifacts.ArtifactRegistry
+import com.almus.appcreatorpro.service.artifacts.KnownSigningKeys
+import com.almus.appcreatorpro.service.artifacts.SignerInfo
 import com.almus.appcreatorpro.service.signing.SigningManager
 import com.almus.appcreatorpro.service.signing.SigningStore
 import com.almus.appcreatorpro.data.repository.FileBuildStore
@@ -28,6 +33,8 @@ import com.almus.appcreatorpro.domain.repository.GitHubRepository
 import com.almus.appcreatorpro.domain.repository.ProjectRepository
 import com.almus.appcreatorpro.domain.repository.SettingsRepository
 import com.almus.appcreatorpro.domain.repository.SourceFileRepository
+import com.almus.appcreatorpro.explorer.KeyValueRecentFilesStore
+import com.almus.appcreatorpro.explorer.RecentFilesStore
 import com.almus.appcreatorpro.domain.repository.StorageInfoProvider
 import com.almus.appcreatorpro.domain.usecase.CreateProjectUseCase
 import com.almus.appcreatorpro.service.build.BuildService
@@ -66,10 +73,29 @@ import com.almus.appcreatorpro.service.preview.PreviewHub
 import com.almus.appcreatorpro.service.ai.FileAgentRunStore
 import com.almus.appcreatorpro.service.ai.FileChatHistoryStore
 import com.almus.appcreatorpro.service.ai.FileChangeHistoryStore
+import com.almus.appcreatorpro.service.repair.FileRepairBackupStore
+import com.almus.appcreatorpro.service.repair.FileRepairLogStore
+import com.almus.appcreatorpro.service.repair.RepairHub
 import com.almus.appcreatorpro.service.ai.GeminiBackendClient
 import com.almus.appcreatorpro.service.ai.OkHttpPostStreamTransport
 import java.util.concurrent.TimeUnit
 import java.io.File
+import com.almus.appcreatorpro.git.GitHubTokenCredentialSource
+import com.almus.appcreatorpro.git.GitIdentity
+import com.almus.appcreatorpro.git.GitIdentityStore
+import com.almus.appcreatorpro.git.GitService
+import com.almus.appcreatorpro.git.JGitEngine
+import com.almus.appcreatorpro.git.ProjectGitCloneTarget
+import com.almus.appcreatorpro.git.ProjectGitWorkspaceResolver
+import com.almus.appcreatorpro.service.github.GitHubAuthState
+import com.almus.appcreatorpro.domain.github.GitHubApi
+import com.almus.appcreatorpro.service.github.GitHubApiImpl
+import com.almus.appcreatorpro.service.github.TokenProvider
+import com.almus.appcreatorpro.workspace.AuthBackedWorkspaceGitHub
+import com.almus.appcreatorpro.workspace.RepoWorkspaceManager
+import com.almus.appcreatorpro.workspace.WorkspaceGitHub
+import com.almus.appcreatorpro.workspace.WorkspaceHub
+import com.almus.appcreatorpro.workspace.WorkspaceStore
 
 /**
  * Hand-written dependency container (no DI framework, keeps the Phase 1 build simple).
@@ -91,6 +117,11 @@ class AppContainer(context: Context) {
     val projectRepository: ProjectRepository = projectStore
 
     val sourceFileRepository: SourceFileRepository = projectStore
+
+    /** Phase 25: the project explorer's "recent files" list (private preferences, one entry per project). */
+    val recentFilesStore: RecentFilesStore = KeyValueRecentFilesStore(
+        SharedPreferencesKeyValueStore(appContext.getSharedPreferences("almus_explorer", Context.MODE_PRIVATE)),
+    )
 
     // ---- Phase 3: GitHub + cloud builds -------------------------------------------------------------------
     // Sign-in details live in private preferences; the access token itself is encrypted with an Android Keystore key.
@@ -131,8 +162,6 @@ class AppContainer(context: Context) {
             ),
         ),
     )
-
-    val artifactInspector: ArtifactInspector = AndroidArtifactInspector(appContext)
 
     val orchestrator = CloudBuildOrchestrator(
         api = gitHubAuth.api,
@@ -193,11 +222,37 @@ class AppContainer(context: Context) {
         onUnauthorized = gitHubAuth::notifyTokenRejected,
     )
 
+    /**
+     * Phase 33: checksums of saved files. Kept in filesDir/apk-meta, a folder the FileProvider does NOT expose
+     * (see res/xml/file_paths.xml), and holding only a checksum, a size, a time and a word per file.
+     */
+    val artifactRegistry = ArtifactRegistry(File(appContext.filesDir, "apk-meta"))
+
     val apkDownloads = ApkDownloadManager(
         downloader = artifactDownloader,
         store = apkStore,
         builds = buildStore,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        registry = artifactRegistry,
+    )
+
+    /**
+     * Phase 33: the artifact manager's engine. It is given only a function that turns a PUBLIC certificate fingerprint into
+     * the label of a saved key. It never receives a keystore, a password or a private key.
+     */
+    val artifactCatalog = ArtifactCatalog(
+        store = apkStore,
+        registry = artifactRegistry,
+        assessor = ArtifactAssessor(
+            analyzer = ArtifactAnalyzer(),
+            reader = AndroidApkPackageReader(appContext),
+            registry = artifactRegistry,
+            keys = KnownSigningKeys { fingerprint ->
+                val wanted = SignerInfo.normalize(fingerprint)
+                signingManager.profiles().firstOrNull { p -> p.sha256?.let { SignerInfo.normalize(it) } == wanted }?.label
+            },
+            deviceSdk = android.os.Build.VERSION.SDK_INT,
+        ),
     )
 
     // ---- Phase 9: Gemini through the ALMUS backend -------------------------------------------------------------------
@@ -243,6 +298,17 @@ class AppContainer(context: Context) {
         ai = GeminiDebugProvider(aiBackend),
     )
 
+    /**
+     * Phase 23: code repair. Patches are staged and checked, written only for files the user accepts, through the same
+     * change manager as the AI assistant. The record of every applied/rejected/rolled back file and the saved originals
+     * live in private app storage.
+     */
+    val repairHub = RepairHub(
+        ai = aiHub,
+        logStore = FileRepairLogStore(File(appContext.filesDir, "repair-log")),
+        backups = FileRepairBackupStore(File(appContext.filesDir, "repair-backups")),
+    )
+
     val storageInfoProvider: StorageInfoProvider = AndroidStorageInfoProvider(appContext)
 
     val createProjectUseCase: CreateProjectUseCase = CreateProjectUseCase(projectRepository)
@@ -274,6 +340,26 @@ class AppContainer(context: Context) {
         importer = importService,
     )
 
+    // ---- Phase 27: Git. History lives in <project>/git next to <project>/files; the GitHub sign-in is reused (github.com only).
+    val gitService: GitService by lazy {
+        // JGit looks for a home folder to read ~/.gitconfig; Android has none, so point it at a private empty folder.
+        try {
+            org.eclipse.jgit.util.FS.DETECTED.setUserHome(File(appContext.filesDir, "git-home").also { it.mkdirs() })
+        } catch (_: Throwable) {
+            // best effort
+        }
+        GitService(
+            workspaces = ProjectGitWorkspaceResolver(transferRepository),
+            engine = JGitEngine(),
+            credentials = GitHubTokenCredentialSource(gitHubAuth.tokenProvider),
+            identities = GitIdentityStore(SharedPreferencesKeyValueStore(appContext.getSharedPreferences("almus_git", Context.MODE_PRIVATE))),
+            cloneTarget = ProjectGitCloneTarget(File(appContext.filesDir, "transfer-staging"), projectRepository, transferRepository),
+            defaultIdentity = {
+                (gitHubAuth.state.value as? GitHubAuthState.Connected)?.user?.login?.let { GitIdentity(it, "$it@users.noreply.github.com") }
+            },
+        )
+    }
+
     val gitHubSource: GitHubSource = AuthBackedGitHubSource(
         auth = gitHubAuth,
         downloader = GitHubRepoDownloader(
@@ -281,6 +367,47 @@ class AppContainer(context: Context) {
             tokenProvider = gitHubAuth.tokenProvider,
             onUnauthorized = gitHubAuth::notifyTokenRejected,
         ),
+    )
+
+    // ---- Phase 28: AI repository workspace -----------------------------------------------------------------------------
+    // Workspace records hold no token. Private repositories use the existing encrypted GitHub sign-in (gitHubAuth); public
+    // ones also work without it, through a second client that never sends an Authorization header.
+    val workspaceStore = WorkspaceStore(
+        SharedPreferencesKeyValueStore(appContext.getSharedPreferences("almus_workspaces", Context.MODE_PRIVATE)),
+    )
+
+    private val publicGitHubApi: GitHubApi = GitHubApiImpl(
+        transport = OkHttpTransport(),
+        tokenProvider = TokenProvider { null },
+        allowAnonymousReads = true,
+    )
+
+    val workspaceGitHub: WorkspaceGitHub = AuthBackedWorkspaceGitHub(
+        auth = gitHubAuth,
+        publicApi = publicGitHubApi,
+        downloader = GitHubRepoDownloader(
+            transport = OkHttpStreamTransport(),
+            tokenProvider = gitHubAuth.tokenProvider,
+            onUnauthorized = gitHubAuth::notifyTokenRejected,
+        ),
+    )
+
+    val workspaceManager = RepoWorkspaceManager(
+        github = workspaceGitHub,
+        importer = importService,
+        transfer = transferRepository,
+        projects = projectRepository,
+        backups = backupStore,
+        store = workspaceStore,
+    )
+
+    val workspaceHub = WorkspaceHub(
+        backend = aiBackend,
+        sourceFiles = sourceFileRepository,
+        projects = projectRepository,
+        chatHistory = chatHistoryStore,
+        store = workspaceStore,
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
     )
 
 }

@@ -12,7 +12,10 @@ object LogRedactor {
         Regex("Bearer\\s+[A-Za-z0-9._~+/=-]{12,}", RegexOption.IGNORE_CASE) to "Bearer ***",
         Regex("(Authorization\\s*[:=]\\s*)\\S+(\\s+\\S+)?", RegexOption.IGNORE_CASE) to "\$1***",
         // NAME=value / NAME: value where NAME looks like a secret (GITHUB_TOKEN, db_password, API_KEY, PRIVATE_KEY ...).
-        Regex("(\\b[A-Za-z0-9_.-]*(?:token|secret|passwd|password|passphrase|store_?pass|key_?pass|pwd|api_?key|private_?key|credential|keystore)[A-Za-z0-9_.-]*\\s*[=:]\\s*)(?!\\*\\*\\*)\\S+", RegexOption.IGNORE_CASE) to "\$1***",
+        // The name must START at the beginning of a word (look-behind), not at every "\b" inside it: with "\b" a long
+        // dotted/dashed word was rescanned from every inner boundary, which is quadratic (a 20,000 character line took
+        // about 20 seconds and froze the AI debugger on the main thread).
+        Regex("((?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]*(?:token|secret|passwd|password|passphrase|store_?pass|key_?pass|pwd|api_?key|private_?key|credential|keystore)[A-Za-z0-9_.-]*\\s*[=:]\\s*)(?!\\*\\*\\*)\\S+", RegexOption.IGNORE_CASE) to "\$1***",
         // Phase 6: a long base64 blob (a keystore file written into a log) is never useful to show.
         Regex("(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{200,}={0,2}") to "***",
         // Signed-URL query parameters (storage links): sig=..., X-Amz-Signature=..., access_token=...

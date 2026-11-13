@@ -28,6 +28,8 @@ enum class AiTaskKind(val wire: String, val expectsJson: Boolean) {
     // Phase 20: UI generation for the live preview.
     PREVIEW_UI("preview_ui", true),
     DEBUG("debug", true),
+    // Phase 22: follow-up questions about a diagnosed build error.
+    DEBUG_FOLLOWUP("debug_followup", true),
     REVIEW("review", true),
 }
 

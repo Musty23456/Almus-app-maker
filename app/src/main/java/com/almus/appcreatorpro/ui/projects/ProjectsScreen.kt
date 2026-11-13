@@ -67,6 +67,8 @@ fun ProjectsScreen(
     onCloudBuild: (String) -> Unit,
     bottomBar: @Composable () -> Unit,
     onImport: () -> Unit = {},
+    onClone: () -> Unit = {},
+    onGitHubProjects: () -> Unit = {},
     /** Null = backups of all projects. */
     onBackups: (String?) -> Unit = {},
     onGenerateWithAi: () -> Unit = {},
@@ -112,12 +114,14 @@ fun ProjectsScreen(
                 title = { Text("Projects") },
                 actions = {
                     TextButton(onClick = onGenerateWithAi) { Text("AI") }
+                    TextButton(onClick = onGitHubProjects) { Text("GitHub") }
                     TextButton(onClick = onImport) { Text("Import") }
                     Box {
                         IconButton(onClick = { topMenuOpen = true }) {
                             Icon(Icons.Filled.MoreVert, contentDescription = "More")
                         }
                         DropdownMenu(expanded = topMenuOpen, onDismissRequest = { topMenuOpen = false }) {
+                            DropdownMenuItem(text = { Text("Clone repository") }, onClick = { topMenuOpen = false; onClone() })
                             DropdownMenuItem(text = { Text("All backups") }, onClick = { topMenuOpen = false; onBackups(null) })
                         }
                     }

@@ -26,6 +26,16 @@ const ANDROID_RULES = [
   '- Use only text files. No images: use vector drawables (XML) or no icon.',
 ].join('\n');
 
+const DIAGNOSIS_RULES = [
+  'Diagnosis rules (build errors: Gradle, Kotlin, Java, Android SDK, dependencies, manifest, XML, resources, network, GitHub Actions):',
+  '- Base every statement on the log, stack trace or code that was given. Do not invent file names, line numbers, versions, library names or log lines.',
+  '- Find the ROOT CAUSE: the first error that the others follow from. Say which other errors are probably consequences, and say "probably" when the log does not prove it.',
+  '- If the information is not enough, say so, give confidence "insufficient" and list what is missing. Never fill a gap with a guess presented as fact.',
+  '- Confidence: "high" only when the given text itself shows the cause; "medium" when it is likely but another cause is possible; "low" when you are mostly reasoning from general knowledge; "insufficient" when you cannot tell.',
+  '- A local analysis from rule-based code may be included. Treat it as a hint to check, not as truth.',
+  '- Transient problems (a download that timed out, a server error 5xx) are not code errors: say that retrying may be enough, and do not claim that for errors that repeat.',
+].join('\n');
+
 const TASKS = {
   chat: {
     json: false,
@@ -77,7 +87,11 @@ const TASKS = {
   },
   debug: {
     json: true,
-    system: `${COMMON}\nYou help debug an Android project built with Gradle. Follow the output format given in the user message exactly. ${JSON_RULES}`,
+    system: `${COMMON}\n${DIAGNOSIS_RULES}\nYou help debug an Android project built with Gradle. Follow the output format given in the user message exactly. ${JSON_RULES}`,
+  },
+  debug_followup: {
+    json: true,
+    system: `${COMMON}\n${DIAGNOSIS_RULES}\nThe user asks a follow-up question about a build error that was already diagnosed. Answer that question from the diagnosis, log excerpt and code in the user message. Follow the output format given in the user message exactly. ${JSON_RULES}`,
   },
   review: {
     json: true,

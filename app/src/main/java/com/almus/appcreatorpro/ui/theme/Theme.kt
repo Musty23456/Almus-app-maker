@@ -6,58 +6,120 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import com.almus.appcreatorpro.domain.model.ThemeMode
 
-private val LightColors = lightColorScheme(
-    primary = Indigo40,
+/** Colors Material does not have a slot for: success, warning, card fill and the hairline border color. */
+data class AlmusColors(
+    val isDark: Boolean,
+    val card: Color,
+    val cardBorder: Color,
+    val success: Color,
+    val successContainer: Color,
+    val onSuccessContainer: Color,
+    val warning: Color,
+    val warningContainer: Color,
+    val onWarningContainer: Color,
+)
+
+private val LightExtras = AlmusColors(
+    isDark = false,
+    card = LightCard,
+    cardBorder = LightOutlineVariant,
+    success = SuccessGreen,
+    successContainer = LightSuccessContainer,
+    onSuccessContainer = LightOnSuccessContainer,
+    warning = LightWarning,
+    warningContainer = LightWarningContainer,
+    onWarningContainer = LightOnWarningContainer,
+)
+
+private val DarkExtras = AlmusColors(
+    isDark = true,
+    card = DarkCard,
+    cardBorder = DarkOutlineVariant,
+    success = DarkSuccess,
+    successContainer = DarkSuccessContainer,
+    onSuccessContainer = DarkOnSuccessContainer,
+    warning = DarkWarning,
+    warningContainer = DarkWarningContainer,
+    onWarningContainer = DarkOnWarningContainer,
+)
+
+val LocalAlmusColors = staticCompositionLocalOf { LightExtras }
+
+/** `MaterialTheme.almus.success`, `MaterialTheme.almus.card`, ... */
+val MaterialTheme.almus: AlmusColors
+    @Composable
+    @ReadOnlyComposable
+    get() = LocalAlmusColors.current
+
+internal val LightColors = lightColorScheme(
+    primary = LightPrimary,
     onPrimary = Color.White,
-    primaryContainer = Indigo90,
-    onPrimaryContainer = Indigo10,
-    secondary = Violet40,
+    primaryContainer = LightPrimaryContainer,
+    onPrimaryContainer = LightOnPrimaryContainer,
+    secondary = LightSecondary,
     onSecondary = Color.White,
-    secondaryContainer = Violet90,
-    onSecondaryContainer = Violet10,
-    tertiary = Azure40,
+    secondaryContainer = LightSecondaryContainer,
+    onSecondaryContainer = LightOnSecondaryContainer,
+    tertiary = LightTertiary,
     onTertiary = Color.White,
-    tertiaryContainer = Azure90,
-    onTertiaryContainer = Azure10,
+    tertiaryContainer = LightTertiaryContainer,
+    onTertiaryContainer = LightOnTertiaryContainer,
     background = LightBackground,
     onBackground = LightOnSurface,
     surface = LightSurface,
     onSurface = LightOnSurface,
     surfaceVariant = LightSurfaceVariant,
     onSurfaceVariant = LightOnSurfaceVariant,
+    surfaceContainerLowest = LightSurfaceContainerLowest,
+    surfaceContainerLow = LightSurfaceContainerLow,
+    surfaceContainer = LightSurfaceContainer,
+    surfaceContainerHigh = LightSurfaceContainerHigh,
+    surfaceContainerHighest = LightSurfaceContainerHighest,
     outline = LightOutline,
+    outlineVariant = LightOutlineVariant,
     error = ErrorLight,
+    onError = Color.White,
     errorContainer = ErrorContainerLight,
     onErrorContainer = OnErrorContainerLight,
 )
 
-private val DarkColors = darkColorScheme(
-    primary = Indigo80,
-    onPrimary = Indigo10,
-    primaryContainer = Indigo40,
-    onPrimaryContainer = Indigo90,
-    secondary = Violet80,
-    onSecondary = Violet10,
-    secondaryContainer = Violet40,
-    onSecondaryContainer = Violet90,
-    tertiary = Azure80,
-    onTertiary = Azure10,
-    tertiaryContainer = Azure40,
-    onTertiaryContainer = Azure90,
+internal val DarkColors = darkColorScheme(
+    primary = DarkPrimary,
+    onPrimary = DarkOnPrimary,
+    primaryContainer = DarkPrimaryContainer,
+    onPrimaryContainer = DarkOnPrimaryContainer,
+    secondary = DarkSecondary,
+    onSecondary = DarkOnSecondary,
+    secondaryContainer = DarkSecondaryContainer,
+    onSecondaryContainer = DarkOnSecondaryContainer,
+    tertiary = DarkTertiary,
+    onTertiary = DarkOnTertiary,
+    tertiaryContainer = DarkTertiaryContainer,
+    onTertiaryContainer = DarkOnTertiaryContainer,
     background = DarkBackground,
     onBackground = DarkOnSurface,
     surface = DarkSurface,
     onSurface = DarkOnSurface,
     surfaceVariant = DarkSurfaceVariant,
     onSurfaceVariant = DarkOnSurfaceVariant,
+    surfaceContainerLowest = DarkSurfaceContainerLowest,
+    surfaceContainerLow = DarkSurfaceContainerLow,
+    surfaceContainer = DarkSurfaceContainer,
+    surfaceContainerHigh = DarkSurfaceContainerHigh,
+    surfaceContainerHighest = DarkSurfaceContainerHighest,
     outline = DarkOutline,
+    outlineVariant = DarkOutlineVariant,
     error = ErrorDark,
+    onError = OnErrorDark,
     errorContainer = ErrorContainerDark,
     onErrorContainer = OnErrorContainerDark,
 )
@@ -86,9 +148,12 @@ fun AlmusTheme(
         }
     }
 
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
-        typography = AppTypography,
-        content = content,
-    )
+    CompositionLocalProvider(LocalAlmusColors provides if (darkTheme) DarkExtras else LightExtras) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColors else LightColors,
+            typography = AppTypography,
+            shapes = AppShapes,
+            content = content,
+        )
+    }
 }

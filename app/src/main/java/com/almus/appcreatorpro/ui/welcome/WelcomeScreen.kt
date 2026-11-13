@@ -25,8 +25,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.almus.appcreatorpro.ui.components.PrototypeBadge
-import com.almus.appcreatorpro.ui.theme.Indigo40
-import com.almus.appcreatorpro.ui.theme.Violet40
+import com.almus.appcreatorpro.ui.theme.BrandStart
+import com.almus.appcreatorpro.ui.theme.BrandEnd
 
 private data class Feature(val title: String, val description: String, val badge: String?)
 
@@ -51,7 +51,7 @@ fun WelcomeScreen(onGetStarted: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(24.dp))
-                .background(Brush.linearGradient(listOf(Indigo40, Violet40)))
+                .background(Brush.linearGradient(listOf(BrandStart, BrandEnd)))
                 .padding(24.dp),
         ) {
             Column {

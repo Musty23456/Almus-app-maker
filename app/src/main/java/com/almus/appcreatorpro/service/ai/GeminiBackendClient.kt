@@ -246,6 +246,7 @@ class GeminiBackendClient(
             401 -> AiException(AiErrorKind.UNAUTHORIZED, "Sign-in to the AI backend failed. Check your access code in AI settings.")
             413 -> AiException(AiErrorKind.TOO_LARGE, "The request is too large. Send fewer or smaller files.")
             429 -> AiException(AiErrorKind.RATE_LIMITED, "Too many requests. Wait a moment and try again.", true, retryAfterHeader?.toIntOrNull())
+            408, 504 -> AiException(AiErrorKind.TIMEOUT, "The AI backend did not answer in time (HTTP $status). Try again.", true)
             in 500..599 -> AiException(AiErrorKind.UNAVAILABLE, "The AI backend is not available right now (HTTP $status). Try again later.", true)
             else -> AiException(AiErrorKind.BAD_RESPONSE, "The AI backend answered with HTTP $status. Check that the backend address is correct.")
         }

@@ -42,6 +42,8 @@ class ApkDownloadManager(
     private val store: ApkStore,
     private val builds: BuildStore,
     private val scope: CoroutineScope,
+    /** When given, the checksum of every verified download is recorded so later checks can detect changes. */
+    private val registry: ArtifactRegistry? = null,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val lock = Any()
@@ -81,6 +83,7 @@ class ApkDownloadManager(
                         onProgress = { p -> _states.update { it + (key to DownloadState.Active(p)) } },
                     )
                     val stored = files.map { StoredApk(buildId, it) }
+                    registry?.let { r -> files.forEach { f -> ArtifactCatalog.recordDownload(r, buildId, f, now()) } }
                     _states.update { it + (key to DownloadState.Finished(stored)) }
                 } catch (e: CancellationException) {
                     _states.update { it + (key to DownloadState.Cancelled) }

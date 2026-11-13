@@ -366,6 +366,8 @@ internal object ErrorKnowledge {
         ErrorCategory.SDK_CONFIGURATION -> "Check compileSdk, minSdk, targetSdk, the installed SDK platforms/build tools and the JDK used by the build."
         ErrorCategory.CODE_QUALITY -> "Review the line; the check is a heuristic and can be wrong."
         ErrorCategory.RUNTIME_RISK -> "Review the line; this is a heuristic hint about a possible crash or freeze, not proof."
+        ErrorCategory.NETWORK -> "A download or connection failed. If the cause was temporary, run the build again; if it repeats, check the address in the message and whether the build machine can reach it."
+        ErrorCategory.GITHUB_ACTIONS -> "Open the failing workflow step in the Actions log and read the message just above the failure. It usually names the action, input or permission involved."
         ErrorCategory.OTHER -> "Read the message and open the full log around it."
     }
 

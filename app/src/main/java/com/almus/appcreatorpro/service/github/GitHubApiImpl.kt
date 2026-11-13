@@ -42,6 +42,12 @@ class GitHubApiImpl(
     private val now: () -> Long = System::currentTimeMillis,
     private val sleep: suspend (Long) -> Unit = { delay(it) },
     private val maxReadRetries: Int = 2,
+    /**
+     * Phase 28: when true, GET requests are sent WITHOUT an Authorization header if no token is stored, which is enough
+     * for public repositories (GitHub allows 60 anonymous requests per hour). Writes always need a token.
+     * Default false, so every existing client behaves exactly as before.
+     */
+    private val allowAnonymousReads: Boolean = false,
 ) : GitHubApi {
 
     // ---------------------------------------------------------------- user & repositories
@@ -91,6 +97,18 @@ class GitHubApiImpl(
     override suspend fun getRepository(owner: String, name: String): GitHubRepo {
         val response = request("GET", "/repos/${seg(owner)}/${seg(name)}", notFound = Kind.REPO_NOT_FOUND, notFoundText = "Repository $owner/$name was not found, or this sign-in cannot access it.")
         return parseRepo(parseObject(response)) ?: throw badResponse("GitHub sent incomplete repository data.")
+    }
+
+    override suspend fun searchRepositories(text: String, page: Int): RepoPage {
+        val q = text.trim()
+        if (q.isEmpty()) return RepoPage(emptyList(), null)
+        val response = request("GET", "/search/repositories?q=${query(q)}&per_page=$PAGE_SIZE&page=$page")
+        val json = parseObject(response)
+        val items = json.arr("items").orEmpty().mapNotNull { it.asObj()?.let(::parseRepo) }
+        val total = json.long("total_count") ?: 0L
+        // GitHub only returns the first 1000 search results.
+        val hasNext = page.toLong() * PAGE_SIZE < minOf(total, 1000L)
+        return RepoPage(items, if (hasNext) page + 1 else null)
     }
 
     override suspend fun createRepository(name: String, description: String?, isPrivate: Boolean): GitHubRepo {
@@ -344,16 +362,20 @@ class GitHubApiImpl(
         notFoundText: String? = null,
     ): HttpResponse {
         val token = tokenProvider.token()?.takeIf { it.isNotBlank() }
-            ?: throw GitHubException(Kind.NOT_CONNECTED, "You are not signed in to GitHub.")
+        if (token == null && !(allowAnonymousReads && method == "GET")) {
+            throw GitHubException(Kind.NOT_CONNECTED, "You are not signed in to GitHub.")
+        }
+        val headers = linkedMapOf(
+            "Accept" to "application/vnd.github+json",
+            "X-GitHub-Api-Version" to API_VERSION,
+            "User-Agent" to USER_AGENT,
+        )
+        // The token goes only into this header, and only when there is one.
+        if (token != null) headers["Authorization"] = "Bearer $token"
         val http = HttpRequest(
             method = method,
             url = baseUrl + path,
-            headers = mapOf(
-                "Accept" to "application/vnd.github+json",
-                "Authorization" to "Bearer $token",
-                "X-GitHub-Api-Version" to API_VERSION,
-                "User-Agent" to USER_AGENT,
-            ),
+            headers = headers,
             body = body,
         )
         val retries = if (method == "GET") maxReadRetries else 0
@@ -450,6 +472,10 @@ class GitHubApiImpl(
             canPush = o.obj("permissions")?.bool("push") ?: true,
             htmlUrl = o.str("html_url") ?: "https://github.com/$ownerLogin/$repoName",
             description = o.str("description"),
+            language = o.str("language"),
+            stars = o.long("stargazers_count")?.toInt(),
+            updatedAtIso = o.str("pushed_at") ?: o.str("updated_at"),
+            sizeKb = o.long("size"),
         )
     }
 

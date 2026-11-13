@@ -16,8 +16,8 @@ object ApkActions {
     /** Android App Bundles have no registered type; this makes every app accept the file as plain data. */
     const val GENERIC_MIME = "application/octet-stream"
 
-    /** Opens the system share sheet for [apk]. Returns an error message, or null when the sheet was opened. */
-    fun share(context: Context, apk: StoredApk): String? {
+    /** Opens the system share sheet for [apk]; [label] (for example "DEBUG APK") is shown in its title. Returns an error message, or null when the sheet was opened. */
+    fun share(context: Context, apk: StoredApk, label: String? = null): String? {
         return try {
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk.file)
             val send = Intent(Intent.ACTION_SEND).apply {
@@ -25,7 +25,7 @@ object ApkActions {
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(send, "Share ${apk.fileName}").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            context.startActivity(Intent.createChooser(send, "Share ${apk.fileName}" + (label?.let { " ($it)" } ?: "")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             null
         } catch (e: ActivityNotFoundException) {
             "No app on this phone can receive the file."

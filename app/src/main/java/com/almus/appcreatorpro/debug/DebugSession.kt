@@ -1,9 +1,12 @@
 package com.almus.appcreatorpro.debug
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 
 /** The raw build log handed to a session, or why there is none. */
 data class RawBuildLog(val text: String?, val note: String?)
@@ -17,6 +20,8 @@ data class DebugState(
     val logNote: String? = null,
     val buildFailed: Boolean? = null,
     val buildIssues: List<BuildIssue> = emptyList(),
+    /** Phase 22: what the build issues mean together (root cause, secondary errors, severity, files, confidence). */
+    val diagnosis: Diagnosis = Diagnosis.EMPTY,
     val omittedWarnings: Int = 0,
     val staticFindings: List<Finding> = emptyList(),
     val filesChecked: Int = 0,
@@ -56,6 +61,8 @@ class DebugSession(
     private val loadLog: suspend () -> RawBuildLog,
     val ai: AiDebugProvider = NoAiProvider,
     val logcat: LogcatSource = UnavailableLogcatSource,
+    /** Receives every unexpected exception that was turned into a message, so none is lost (default: stderr / Logcat). */
+    private val errorSink: (String, Throwable) -> Unit = DefaultErrorSink,
 ) {
     val fixes = FixManager(files)
 
@@ -64,27 +71,69 @@ class DebugSession(
 
     private var pathsCache: List<String> = emptyList()
 
-    /** Reads and analyses the build log. Safe to call again (refresh). */
+    /** The last AI diagnosis and what it was built from, so a follow-up question can refer to it. Null before the first answer. */
+    private class StoredAnswer(val response: AiDebugResponse, val request: AiDebugRequest, val offered: List<FixProposal>, val rejected: Int)
+
+    @Volatile private var lastAnswer: StoredAnswer? = null
+
+    /**
+     * Reads and analyses the build log. Safe to call again (refresh). The analysis of a large log runs on a background
+     * dispatcher (never on the main thread), the log is bounded by [LogLimits], and a failure becomes a note on the
+     * screen instead of an exception. [DebugState.loadingLog] is always reset, also when the work is cancelled.
+     */
     suspend fun loadBuildLog() {
         if (buildId == null) {
             _state.update { it.copy(logLoaded = true, logNote = "No build is selected. Use the code checks, or open a build and choose \"Analyze errors\".") }
             return
         }
         _state.update { it.copy(loadingLog = true, message = null) }
-        val raw = try { loadLog() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { RawBuildLog(null, "The log could not be loaded: ${e.message.orEmpty()}") }
-        val text = raw.text
-        if (text.isNullOrBlank()) {
-            _state.update { it.copy(loadingLog = false, logLoaded = true, logNote = raw.note ?: "This build has no log yet.", buildIssues = emptyList(), entries = emptyList()) }
-            return
-        }
-        pathsCache = try { listPaths() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { emptyList() }
-        val result = BuildErrorAnalyzer(ProjectPathResolver(pathsCache)).analyze(text)
-        val entries = LogParser.parse(text)
-        _state.update {
-            it.copy(
-                loadingLog = false, logLoaded = true, logNote = raw.note, buildFailed = result.buildFailed,
-                buildIssues = result.issues, omittedWarnings = result.omittedWarnings, entries = entries,
-            )
+        try {
+            val raw = try {
+                loadLog()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                errorSink("The build log could not be loaded", e)
+                RawBuildLog(null, "The log could not be loaded: ${e.message.orEmpty()}")
+            }
+            val text = raw.text
+            if (text.isNullOrBlank()) {
+                _state.update { it.copy(loadingLog = false, logLoaded = true, logNote = raw.note ?: "This build has no log yet.", buildIssues = emptyList(), entries = emptyList()) }
+                return
+            }
+            val paths = try { listPaths() } catch (e: CancellationException) { throw e } catch (e: Exception) { errorSink("The project file list could not be read", e); emptyList() }
+            pathsCache = paths
+            val bounded = LogLimits.bound(text)
+            val analysed = try {
+                withContext(Dispatchers.Default) {
+                    val run = DiagnosisEngine(ProjectPathResolver(paths), paths).run(bounded.text, truncated = bounded.truncated)
+                    run to LogParser.parse(bounded.text)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (!AiFailures.isRecoverable(e)) throw e
+                errorSink("The build log could not be analysed", e)
+                _state.update {
+                    it.copy(loadingLog = false, logLoaded = true, buildIssues = emptyList(), entries = emptyList(),
+                        logNote = "The log could not be analysed (${e.javaClass.simpleName}). It may be too large for this phone.")
+                }
+                return
+            }
+            val (run, entries) = analysed
+            val result = run.analysis
+            // A new analysis replaces the old one, and so do answers that were about the old one.
+            lastAnswer = null
+            _state.update {
+                it.copy(
+                    loadingLog = false, logLoaded = true, logNote = listOfNotNull(raw.note, bounded.note).joinToString(" ").ifBlank { null },
+                    buildFailed = result.buildFailed, buildIssues = result.issues, diagnosis = run.diagnosis,
+                    omittedWarnings = result.omittedWarnings, entries = entries,
+                )
+            }
+        } finally {
+            // Cancelled (the screen was left) or failed half way: never leave the spinner on.
+            _state.update { if (it.loadingLog) it.copy(loadingLog = false) else it }
         }
     }
 
@@ -97,11 +146,25 @@ class DebugSession(
             for (p in pathsCache) {
                 try { map[p] = files.read(p) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { /* unreadable or too large: skipped */ }
             }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            _state.update { it.copy(runningChecks = false) }
+            throw e
+        } catch (e: Exception) {
+            errorSink("The project files could not be read", e)
             _state.update { it.copy(runningChecks = false, message = "The project files could not be read: ${e.message.orEmpty()}") }
             return
         }
-        val result = StaticDiagnostics().analyze(map)
+        val result = try {
+            withContext(Dispatchers.Default) { StaticDiagnostics().analyze(map) }
+        } catch (e: CancellationException) {
+            _state.update { it.copy(runningChecks = false) }
+            throw e
+        } catch (e: Throwable) {
+            if (!AiFailures.isRecoverable(e)) throw e
+            errorSink("The code checks failed", e)
+            _state.update { it.copy(runningChecks = false, message = "The code checks could not be completed (${e.javaClass.simpleName}).") }
+            return
+        }
         fixes.offer(result.fixes)
         _state.update { it.copy(runningChecks = false, checksRan = true, staticFindings = result.findings, filesChecked = result.filesChecked) }
     }
@@ -117,6 +180,9 @@ class DebugSession(
     fun toggleLevel(level: LogLevel) = _state.update { it.copy(logFilter = it.logFilter.toggleLevel(level)) }
     fun setQuery(q: String) = _state.update { it.copy(logFilter = it.logFilter.copy(query = q)) }
     fun dismissMessage() = _state.update { it.copy(message = null) }
+
+    /** Shows [text] in the screen's message bar (used by the screen's last-resort error handler). */
+    fun postMessage(text: String) = _state.update { it.copy(message = text) }
 
     /** Text to copy: the visible (filtered) log lines. */
     fun copyText(): String = LogExport.toText(state.value.visibleLog)
@@ -136,6 +202,9 @@ class DebugSession(
         _state.update { it.copy(message = describe(r)) }
         return r
     }
+
+    /** Phase 23: files were changed (or restored) by the repair engine; static findings are out of date. */
+    suspend fun filesChangedExternally() { afterFileChange(true) }
 
     /** Files changed: static findings are out of date, so run them again (only if they had been run). */
     private suspend fun afterFileChange(changed: Boolean) {
@@ -167,18 +236,106 @@ class DebugSession(
         return AiRequestBuilder.build(
             task, projectName, buildId, AnalysisResult(s.buildIssues, s.buildFailed, s.omittedWarnings), s.issues, s.entries,
             if (includeCode) files else null,
+            diagnosis = s.diagnosis,
         )
     }
 
-    /** Sends [request] to the provider and offers any valid patches as fixes (never applied automatically). */
+    // ---- Phase 22: diagnosis report and follow-up questions ---------------------------------------------------------
+
+    /**
+     * The eight-section report for [focusIssueId] (default: the problem to fix first), or null when the log holds nothing
+     * to diagnose. If an AI diagnosis exists for that problem it is merged in, with its claims checked (see
+     * [DiagnosisReports.withAi]); otherwise the report is the local, rule-based one.
+     */
+    fun diagnosisReport(focusIssueId: String? = null): DiagnosisReport? {
+        val d = state.value.diagnosis
+        val focus = focusIssueId?.let { d.find(it) } ?: d.primary ?: d.issues.firstOrNull() ?: return null
+        val pending = fixes.entries.value.filter { it.status == FixStatus.PENDING }.map { it.proposal }
+        val local = DiagnosisReports.local(d, focus, pending) ?: return null
+        val a = lastAnswer
+        val aboutFocus = a != null && a.request.issues.firstOrNull()?.id?.let { it == focus.id || it in focus.mergedIssueIds } == true
+        if (a == null || !aboutFocus) return local
+        return DiagnosisReports.withAi(local, a.response, focus.confidence, pathsCache, a.offered, a.rejected)
+    }
+
+    /**
+     * Answers a follow-up [question] about the diagnosis. It sends the local diagnosis, the earlier answer and the SAME log
+     * excerpt and code snippets the user already confirmed for the diagnosis; without an earlier confirmed request only a
+     * redacted log excerpt goes out, never source code. Never throws for a failure; only cancellation is rethrown.
+     */
+    suspend fun askFollowUp(question: String, focusIssueId: String?, history: List<FollowUpExchange>): FollowUpOutcome {
+        val s = state.value
+        if (s.diagnosis.isEmpty) return FollowUpOutcome.Unavailable("There is no diagnosed error to ask about. Open a build with errors first.")
+        val focus = focusIssueId?.let { s.diagnosis.find(it) } ?: s.diagnosis.primary
+        val previous = lastAnswer
+        val request = try {
+            val base = previous?.request ?: AiRequestBuilder.build(
+                AiTask.DIAGNOSE, projectName, buildId, AnalysisResult(s.buildIssues, s.buildFailed, s.omittedWarnings), s.issues, s.entries, null, s.diagnosis,
+            )
+            AiFollowUpRequest(
+                projectName = projectName,
+                question = question,
+                diagnosisContext = DiagnosisText.forFollowUp(s.diagnosis, focus),
+                previousAnswer = previous?.let { FollowUpPrompt.summarize(it.response) }.orEmpty(),
+                history = FollowUpPrompt.boundHistory(history).map { FollowUpExchange(it.question, AiRequestBuilder.safeRedact(it.answer, FollowUpPrompt.MAX_HISTORY_ANSWER_CHARS)) },
+                logExcerpt = base.logExcerpt,
+                files = base.files,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!AiFailures.isRecoverable(e)) throw e
+            return AiFailures.describe(e).let { (m, r) -> FollowUpOutcome.Failed(m, r, e) }
+        }
+        val result = try {
+            ai.followUp(request)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!AiFailures.isRecoverable(e)) throw e
+            return AiFailures.describe(e).let { (m, r) -> FollowUpOutcome.Failed(m, r, e) }
+        }
+        return when (result) {
+            is FollowUpResult.Unavailable -> FollowUpOutcome.Unavailable(result.reason)
+            is FollowUpResult.Failed -> FollowUpOutcome.Failed(result.message, result.retryable, result.cause)
+            is FollowUpResult.Success -> FollowUpOutcome.Answer(result.answer, ConfidenceCalibrator.calibrate(result.answer.confidence, focus?.confidence))
+        }
+    }
+
+    /** True when the follow-up request would carry source code snippets (the screen tells the user). */
+    fun followUpIncludesCode(): Boolean = lastAnswer?.request?.containsSourceCode == true
+
+    /**
+     * Sends [request] to the provider and offers any valid patches as fixes (never applied automatically: they only
+     * join the list of suggestions, which the user previews and applies one by one).
+     *
+     * Never throws for a failed request: provider problems, unexpected exceptions and unusable answers all come back as
+     * [AiOutcome.Failed]. Only cancellation is rethrown, so the caller's coroutine can stop properly.
+     */
     suspend fun askAi(request: AiDebugRequest): AiOutcome {
-        return when (val r = ai.analyze(request)) {
-            is AiResult.Unavailable -> AiOutcome.Unavailable(r.reason)
-            is AiResult.Failed -> AiOutcome.Failed(r.message, r.retryable)
-            is AiResult.Success -> {
-                val conv = AiPatchConverter.convert(r.response, files, request.issues.firstOrNull()?.id)
-                fixes.offer(conv.filterIsInstance<PatchConversion.Ok>().map { it.proposal })
-                AiOutcome.Answer(r.response, conv.filterIsInstance<PatchConversion.Rejected>())
+        val result = try {
+            ai.analyze(request)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!AiFailures.isRecoverable(e)) throw e
+            return AiFailures.outcome(e)
+        }
+        return when (result) {
+            is AiResult.Unavailable -> AiOutcome.Unavailable(result.reason)
+            is AiResult.Failed -> AiOutcome.Failed(result.message, result.retryable, result.cause)
+            is AiResult.Success -> try {
+                val conv = AiPatchConverter.convert(result.response, files, request.issues.firstOrNull()?.id)
+                val ok = conv.filterIsInstance<PatchConversion.Ok>().map { it.proposal }
+                val rejected = conv.filterIsInstance<PatchConversion.Rejected>()
+                fixes.offer(ok)
+                lastAnswer = StoredAnswer(result.response, request, ok, rejected.size)
+                AiOutcome.Answer(result.response, rejected)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (!AiFailures.isRecoverable(e)) throw e
+                AiOutcome.Failed("The AI answered, but its suggested changes could not be checked (${e.javaClass.simpleName}). Nothing was changed. Try again.", true, e)
             }
         }
     }
@@ -187,5 +344,5 @@ class DebugSession(
 sealed interface AiOutcome {
     data class Answer(val response: AiDebugResponse, val rejectedPatches: List<PatchConversion.Rejected>) : AiOutcome
     data class Unavailable(val reason: String) : AiOutcome
-    data class Failed(val message: String, val retryable: Boolean) : AiOutcome
+    data class Failed(val message: String, val retryable: Boolean, val cause: Throwable? = null) : AiOutcome
 }

@@ -22,6 +22,11 @@ enum class ErrorCategory(val label: String) {
 
     /** Static diagnostics only: code that may fail or misbehave while the app runs. */
     RUNTIME_RISK("Potential runtime issue"),
+    /** Phase 22: downloads and connections that fail (timeouts, TLS, HTTP errors from a repository). */
+    NETWORK("Network"),
+
+    /** Phase 22: problems of the CI workflow or runner (actions that cannot be resolved, permissions, disk space, time limits). */
+    GITHUB_ACTIONS("GitHub Actions"),
     OTHER("Other"),
 }
 

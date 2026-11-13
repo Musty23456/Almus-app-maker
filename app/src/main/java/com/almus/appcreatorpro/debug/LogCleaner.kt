@@ -53,7 +53,7 @@ object LogCleaner {
 
     // File locations like "KeyStoreHelper.kt:12:5" must survive redaction: LogRedactor would otherwise read
     // "KeyStore...:12:5" as "name: value" and hide the line number.
-    private val location = Regex("[\\w.\\-]+\\.(?:kts?|java|xml|gradle|properties|pro|toml|json):\\d+(?::\\d+)?(?:-\\d+)?")
+    private val location = Regex("(?<![\\w.\\-])[\\w.\\-]+\\.(?:kts?|java|xml|gradle|properties|pro|toml|json):\\d+(?::\\d+)?(?:-\\d+)?")
 
     /** Removes secrets (tokens, passwords, signed-URL signatures) but keeps file:line locations readable. */
     fun redact(line: String): String {

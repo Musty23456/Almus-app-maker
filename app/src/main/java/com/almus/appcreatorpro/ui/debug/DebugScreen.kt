@@ -58,6 +58,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.almus.appcreatorpro.debug.AiAvailability
 import com.almus.appcreatorpro.debug.AiOutcome
 import com.almus.appcreatorpro.debug.AiTask
+import com.almus.appcreatorpro.debug.AiUi
 import com.almus.appcreatorpro.debug.BuildIssue
 import com.almus.appcreatorpro.debug.DebugSession
 import com.almus.appcreatorpro.debug.DiffKind
@@ -74,12 +75,12 @@ import com.almus.appcreatorpro.ui.components.BodyText
 import com.almus.appcreatorpro.ui.components.CardTone
 import com.almus.appcreatorpro.ui.components.LoadingView
 import com.almus.appcreatorpro.ui.components.SectionCard
-import com.almus.appcreatorpro.ui.theme.SuccessGreen
+import com.almus.appcreatorpro.ui.theme.almus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val TABS = listOf("Errors", "Log", "Fixes")
+private val TABS = listOf("Errors", "Diagnosis", "Log", "Fixes", "Repair")
 
 /**
  * Phase 8 debugging screen: error dashboard (build log + static code checks), log viewer, and fix management.
@@ -92,6 +93,8 @@ fun DebugScreen(
     buildId: String?,
     onBack: () -> Unit,
     onOpenFile: (path: String, line: Int?, column: Int?) -> Unit,
+    /** Phase 23: opens the cloud build screen after a repair was applied. The app never starts a build by itself. */
+    onRebuild: () -> Unit = {},
 ) {
     val vm: DebugViewModel = viewModel(key = "debug-$projectId-${buildId.orEmpty()}", factory = AppViewModelProvider.debugFactory(projectId, buildId))
     val session by vm.session.collectAsStateWithLifecycle()
@@ -122,13 +125,13 @@ fun DebugScreen(
             TabRow(selectedTabIndex = tab) {
                 TABS.forEachIndexed { i, t -> Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) }) }
             }
-            DebugBody(vm, s, tab, snackbar, onOpenFile)
+            DebugBody(vm, s, tab, snackbar, onOpenFile, onRebuild)
         }
     }
 }
 
 @Composable
-private fun DebugBody(vm: DebugViewModel, s: DebugSession, tab: Int, snackbar: SnackbarHostState, onOpenFile: (String, Int?, Int?) -> Unit) {
+private fun DebugBody(vm: DebugViewModel, s: DebugSession, tab: Int, snackbar: SnackbarHostState, onOpenFile: (String, Int?, Int?) -> Unit, onRebuild: () -> Unit) {
     val state by s.state.collectAsStateWithLifecycle()
     val entries by s.fixes.entries.collectAsStateWithLifecycle()
     val undoDepth by s.fixes.undoDepth.collectAsStateWithLifecycle()
@@ -142,8 +145,10 @@ private fun DebugBody(vm: DebugViewModel, s: DebugSession, tab: Int, snackbar: S
 
     when (tab) {
         0 -> ErrorsTab(vm, s, state, entries, onOpenFile)
-        1 -> LogTab(vm, s, state, snackbar)
-        else -> FixesTab(vm, entries, undoDepth)
+        1 -> DiagnosisTab(vm, s, state, entries, onOpenFile)
+        2 -> LogTab(vm, s, state, snackbar)
+        3 -> FixesTab(vm, entries, undoDepth)
+        else -> RepairTab(vm, s, state, snackbar, onOpenFile, onRebuild)
     }
 }
 
@@ -314,39 +319,234 @@ private fun FixesTab(vm: DebugViewModel, entries: List<FixEntry>, undoDepth: Int
     }
 }
 
+/** The "Send to the AI?" question. Shown by every screen that can start an AI request, so nothing leaves the device unasked. */
+@Composable
+internal fun AiConfirmDialog(vm: DebugViewModel, ai: AiUi.Confirm) {
+    AlertDialog(
+        onDismissRequest = vm::cancelAi,
+        title = { Text("Send to the AI?") },
+        text = {
+            Text(
+                "This sends ${ai.request.issues.size} error(s), a redacted log excerpt" +
+                    (if (ai.request.localAnalysis.isNotBlank()) ", the result of the local analysis" else "") +
+                    (if (ai.request.containsSourceCode) " and code from ${ai.request.files.size} file(s): " + ai.request.files.joinToString { it.path } else "") + " to the AI provider.",
+            )
+        },
+        confirmButton = { TextButton(onClick = { vm.sendAi(ai.request) }) { Text("Send") } },
+        dismissButton = { TextButton(onClick = vm::cancelAi) { Text("Cancel") } },
+    )
+}
+
 @Composable
 private fun AiCard(vm: DebugViewModel, ai: AiUi, note: String?) {
+    val busy = ai is AiUi.Preparing || ai is AiUi.Working
     SectionCard("AI debugging") {
         BodyText(note ?: "An AI provider is connected. Nothing is sent until you confirm.")
         if (note == null) {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AiTask.values().forEach { t -> OutlinedButton(onClick = { vm.prepareAi(t, includeCode = t != AiTask.EXPLAIN) }) { Text(t.label) } }
+                // Disabled while a request runs: a second request at the same time is never started.
+                AiTask.values().forEach { t -> OutlinedButton(enabled = !busy, onClick = { vm.prepareAi(t, includeCode = t != AiTask.EXPLAIN) }) { Text(t.label) } }
             }
         }
         when (ai) {
             AiUi.Idle -> Unit
-            AiUi.Working -> BodyText("Waiting for the answer...")
-            is AiUi.Confirm -> AlertDialog(
-                onDismissRequest = vm::cancelAi,
-                title = { Text("Send to the AI?") },
-                text = {
-                    Text(
-                        "This sends ${ai.request.issues.size} error(s), a redacted log excerpt" +
-                            (if (ai.request.containsSourceCode) " and code from ${ai.request.files.size} file(s): " + ai.request.files.joinToString { it.path } else "") + " to the AI provider.",
-                    )
-                },
-                confirmButton = { TextButton(onClick = { vm.sendAi(ai.request) }) { Text("Send") } },
-                dismissButton = { TextButton(onClick = vm::cancelAi) { Text("Cancel") } },
-            )
-            is AiUi.Done -> when (val o = ai.outcome) {
-                is AiOutcome.Answer -> {
-                    Text(o.response.summary, fontWeight = FontWeight.Bold)
-                    o.response.rootCause?.let { BodyText("Cause: $it") }
-                    BodyText(o.response.explanation)
-                    if (o.rejectedPatches.isNotEmpty()) BodyText("${o.rejectedPatches.size} suggested change(s) did not match your files and were not offered.")
+            AiUi.Preparing -> {
+                BodyText("Preparing the request...")
+                TextButton(onClick = vm::cancelAi) { Text("Cancel") }
+            }
+            is AiUi.Working -> {
+                BodyText("Waiting for the answer... This can take a minute. Your project is not changed while you wait.")
+                TextButton(onClick = vm::cancelAi) { Text("Cancel") }
+            }
+            is AiUi.Confirm -> AiConfirmDialog(vm, ai)
+            is AiUi.Done -> {
+                when (val o = ai.outcome) {
+                    is AiOutcome.Answer -> {
+                        Text(o.response.summary, fontWeight = FontWeight.Bold)
+                        o.response.rootCause?.let { BodyText("Cause: $it") }
+                        BodyText(o.response.explanation)
+                        if (o.rejectedPatches.isNotEmpty()) BodyText("${o.rejectedPatches.size} suggested change(s) did not match your files and were not offered.")
+                    }
+                    is AiOutcome.Unavailable -> BodyText(o.reason)
+                    is AiOutcome.Failed -> BodyText(o.message)
                 }
-                is AiOutcome.Unavailable -> BodyText(o.reason)
-                is AiOutcome.Failed -> BodyText(o.message)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (ai.outcome is AiOutcome.Failed) Button(onClick = vm::retryAi) { Text("Retry") }
+                    TextButton(onClick = vm::cancelAi) { Text("Close") }
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------------------------------ diagnosis (Phase 22)
+
+@Composable
+private fun DiagnosisTab(
+    vm: DebugViewModel,
+    s: DebugSession,
+    state: com.almus.appcreatorpro.debug.DebugState,
+    entries: List<FixEntry>,
+    onOpenFile: (String, Int?, Int?) -> Unit,
+) {
+    val ai by vm.ai.collectAsStateWithLifecycle()
+    val aiNote by vm.aiNote.collectAsStateWithLifecycle()
+    val followUp by vm.followUp.collectAsStateWithLifecycle()
+    val clipboard = LocalClipboardManager.current
+    var focusId by rememberSaveable { mutableStateOf<String?>(null) }
+    var question by rememberSaveable { mutableStateOf("") }
+    val diagnosis = state.diagnosis
+    val report = remember(diagnosis, ai, entries, focusId) { s.diagnosisReport(focusId) }
+    val aiBusy = ai is AiUi.Preparing || ai is AiUi.Working
+    LaunchedEffect(focusId) { vm.focusFollowUp(focusId) }
+    if (ai is AiUi.Confirm) AiConfirmDialog(vm, ai as AiUi.Confirm)
+
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (report == null) {
+            item {
+                SectionCard("Nothing to diagnose") {
+                    BodyText(
+                        if (state.loadingLog) "Reading the build log..."
+                        else "No error was found in the build log, so there is nothing to diagnose. Open a build that failed to see a diagnosis.",
+                    )
+                }
+            }
+            return@LazyColumn
+        }
+        item {
+            SectionCard("How to read this") {
+                BodyText("This diagnosis comes from rules that read the log; nothing was sent anywhere. It states how sure it is and says so when the log is not enough. It never proves a fix works.")
+                if (diagnosis.rootCauses.size + diagnosis.secondary.size > 1) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        (diagnosis.rootCauses + diagnosis.secondary).forEach { d ->
+                            val selected = (focusId ?: diagnosis.primary?.id) == d.id
+                            FilterChip(
+                                selected = selected,
+                                onClick = { focusId = d.id },
+                                label = { Text((if (d.role == com.almus.appcreatorpro.debug.ErrorRole.SECONDARY) "Secondary: " else "Root: ") + d.issue.message.take(28)) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            SectionCard("Error summary", badge = report.confidence.level.label + " confidence") {
+                SelectionContainer { Text(report.errorSummary, style = MaterialTheme.typography.bodyLarge) }
+                Text("Category: ${report.errorCategory}", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+        item {
+            SectionCard("Root cause") { SelectionContainer { BodyText(report.rootCause) } }
+        }
+        item {
+            SectionCard("Affected files") {
+                if (report.affectedFiles.isEmpty()) BodyText("No file is named in the information available.")
+                report.affectedFiles.forEach { f ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(Modifier.weight(1f)) {
+                            Text(f.label, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                            Text(f.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        val p = f.path
+                        if (p != null) TextButton(onClick = { onOpenFile(p, f.line, null) }) { Text("Open") }
+                    }
+                }
+            }
+        }
+        item { SectionCard("Technical explanation") { SelectionContainer { BodyText(report.technicalExplanation) } } }
+        item { SectionCard("Recommended solution") { SelectionContainer { BodyText(report.recommendedSolution) } } }
+        item {
+            SectionCard("Suggested code changes") {
+                if (report.codeChanges.isEmpty()) BodyText("No specific code change is suggested: the evidence does not support one.")
+                report.codeChanges.forEach { c ->
+                    c.path?.let { Text(it, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
+                    BodyText(c.description)
+                    c.code?.let { SelectionContainer { Text(it, fontFamily = FontFamily.Monospace, fontSize = 12.sp) } }
+                    Text(c.source.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            SectionCard("Confidence: ${report.confidence.level.label}") {
+                report.confidence.score?.let { BodyText("Local score: $it / 100") }
+                report.confidence.reasons.forEach { BodyText("- $it") }
+                report.confidence.note?.let { BodyText(it) }
+            }
+        }
+        if (report.secondaryErrors.isNotEmpty()) {
+            item {
+                SectionCard("Secondary errors") {
+                    BodyText("These most likely follow from the root cause above, so fix that first.")
+                    report.secondaryErrors.forEach { BodyText("- $it") }
+                }
+            }
+        }
+        if (report.limitations.isNotEmpty()) {
+            item {
+                SectionCard("What this cannot tell") { report.limitations.forEach { BodyText("- $it") } }
+            }
+        }
+        item {
+            SectionCard("AI diagnosis") {
+                BodyText(aiNote ?: "Ask the AI to review this diagnosis. You see what will be sent and confirm first. ${if (report.aiAssisted) "An AI answer is already merged into the report above." else ""}")
+                when (val a = ai) {
+                    AiUi.Preparing -> BodyText("Preparing the request...")
+                    is AiUi.Working -> BodyText("Waiting for the answer... Your project is not changed while you wait.")
+                    is AiUi.Done -> when (val o = a.outcome) {
+                        is AiOutcome.Unavailable -> BodyText(o.reason)
+                        is AiOutcome.Failed -> BodyText(o.message)
+                        else -> Unit
+                    }
+                    else -> Unit
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (aiNote == null) Button(enabled = !aiBusy, onClick = { vm.prepareAi(AiTask.DIAGNOSE, includeCode = true) }) { Text("Diagnose with AI") }
+                    if (aiBusy) TextButton(onClick = vm::cancelAi) { Text("Cancel") }
+                    if (ai is AiUi.Done && (ai as AiUi.Done).outcome is AiOutcome.Failed) Button(onClick = vm::retryAi) { Text("Retry") }
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(report.toMarkdown())) }) { Text("Copy report") }
+                }
+            }
+        }
+        item {
+            SectionCard("Ask a follow-up question") {
+                BodyText("Ask why this happened or how to fix it. Only the redacted log excerpt and the code you already confirmed are used; nothing else is sent." +
+                    if (s.followUpIncludesCode()) " The earlier request included code snippets, and a question sends the same ones again." else "")
+                followUp.turns.forEach { t ->
+                    Text("You: ${t.question}", fontWeight = FontWeight.Bold)
+                    when {
+                        t.pending -> BodyText("Waiting for the answer...")
+                        else -> when (val o = t.outcome) {
+                            is com.almus.appcreatorpro.debug.FollowUpOutcome.Answer -> {
+                                SelectionContainer { BodyText(o.answer.answer) }
+                                Text("Confidence: ${o.confidence.level.label}" + (o.confidence.note?.let { " - $it" } ?: ""), style = MaterialTheme.typography.bodySmall)
+                                if (o.answer.missingInformation.isNotEmpty()) BodyText("Missing information: " + o.answer.missingInformation.joinToString("; "))
+                                o.answer.codeSuggestions.forEach { c ->
+                                    c.path?.let { Text(it, fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
+                                    BodyText(c.description + " (not checked against your files)")
+                                    c.code?.let { SelectionContainer { Text(it, fontFamily = FontFamily.Monospace, fontSize = 12.sp) } }
+                                }
+                            }
+                            is com.almus.appcreatorpro.debug.FollowUpOutcome.Unavailable -> BodyText(o.reason)
+                            is com.almus.appcreatorpro.debug.FollowUpOutcome.Failed -> BodyText(o.message)
+                            null -> Unit
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = question,
+                    onValueChange = { question = it },
+                    label = { Text("Your question") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !followUp.busy,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(enabled = !followUp.busy && question.isNotBlank(), onClick = { if (vm.askFollowUp(question)) question = "" }) { Text("Send") }
+                    if (followUp.busy) TextButton(onClick = vm::cancelFollowUp) { Text("Cancel") }
+                    val last = followUp.turns.lastOrNull()
+                    if (!followUp.busy && last?.outcome is com.almus.appcreatorpro.debug.FollowUpOutcome.Failed) TextButton(onClick = vm::retryFollowUp) { Text("Retry") }
+                    if (followUp.turns.isNotEmpty() && !followUp.busy) TextButton(onClick = vm::clearFollowUp) { Text("Clear") }
+                }
             }
         }
     }
@@ -370,7 +570,7 @@ private fun PreviewDialog(p: FixPreviewUi, onApply: () -> Unit, onReject: () -> 
                         p.preview.diff.forEach { d ->
                             val (prefix, color) = when (d.kind) {
                                 DiffKind.REMOVED -> "- " to MaterialTheme.colorScheme.error
-                                DiffKind.ADDED -> "+ " to SuccessGreen
+                                DiffKind.ADDED -> "+ " to MaterialTheme.almus.success
                                 DiffKind.CONTEXT -> "  " to MaterialTheme.colorScheme.onSurfaceVariant
                             }
                             val n = (d.oldLine ?: d.newLine)?.toString().orEmpty().padStart(4)

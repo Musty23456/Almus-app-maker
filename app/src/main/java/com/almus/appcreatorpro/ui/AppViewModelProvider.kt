@@ -21,6 +21,9 @@ import com.almus.appcreatorpro.ui.builds.BuildStatusViewModel
 import com.almus.appcreatorpro.ui.cloudbuild.CloudBuildViewModel
 import com.almus.appcreatorpro.ui.dashboard.BuildDashboardViewModel
 import com.almus.appcreatorpro.ui.github.GitHubConnectionViewModel
+import com.almus.appcreatorpro.ui.git.CloneViewModel
+import com.almus.appcreatorpro.ui.git.GitViewModel
+import com.almus.appcreatorpro.service.github.GitHubAuthState
 import com.almus.appcreatorpro.ui.github.RepositorySelectorViewModel
 import com.almus.appcreatorpro.ui.editor.EditorViewModel
 import com.almus.appcreatorpro.ui.home.HomeViewModel
@@ -30,6 +33,8 @@ import com.almus.appcreatorpro.ui.settings.SettingsViewModel
 import com.almus.appcreatorpro.ui.transfer.BackupsViewModel
 import com.almus.appcreatorpro.ui.transfer.ImportViewModel
 import com.almus.appcreatorpro.ui.transfer.ProjectTransferViewModel
+import com.almus.appcreatorpro.ui.workspace.MyGitHubProjectsViewModel
+import com.almus.appcreatorpro.ui.workspace.RepoWorkspaceViewModel
 
 /** One factory that knows how to build every ViewModel from the [AppContainer]. */
 object AppViewModelProvider {
@@ -41,6 +46,18 @@ object AppViewModelProvider {
                 gitHubRepository = container().gitHubRepository,
                 storageInfoProvider = container().storageInfoProvider,
                 buildService = container().buildService,
+            )
+        }
+        initializer {
+            CloneViewModel(service = container().gitService, github = container().gitHubSource)
+        }
+        initializer {
+            MyGitHubProjectsViewModel(
+                github = container().workspaceGitHub,
+                manager = container().workspaceManager,
+                store = container().workspaceStore,
+                projects = container().projectRepository,
+                hub = container().workspaceHub,
             )
         }
         initializer {
@@ -91,8 +108,8 @@ object AppViewModelProvider {
         initializer {
             ArtifactsViewModel(
                 builds = container().buildStore,
-                store = container().apkStore,
-                inspector = container().artifactInspector,
+                catalog = container().artifactCatalog,
+                downloads = container().apkDownloads,
             )
         }
         initializer { GitHubConnectionViewModel(auth = container().gitHubAuth) }
@@ -175,6 +192,7 @@ object AppViewModelProvider {
                 projectId = projectId,
                 buildId = buildId,
                 hub = container().debugHub,
+                repairHub = container().repairHub,
             )
         }
     }
@@ -191,6 +209,31 @@ object AppViewModelProvider {
         initializer { AgentViewModel(projectId = projectId, hub = container().aiHub) }
     }
 
+    /** Phase 28: the AI conversation and tools of one repository workspace. */
+    fun workspaceFactory(workspaceId: String): ViewModelProvider.Factory = viewModelFactory {
+        initializer {
+            RepoWorkspaceViewModel(
+                workspaceId = workspaceId,
+                store = container().workspaceStore,
+                hub = container().workspaceHub,
+                manager = container().workspaceManager,
+                aiHub = container().aiHub,
+                projects = container().projectRepository,
+            )
+        }
+    }
+
+    /** Phase 27: the Git screen works on one project. */
+    fun gitFactory(projectId: String): ViewModelProvider.Factory = viewModelFactory {
+        initializer {
+            GitViewModel(
+                projectId = projectId,
+                service = container().gitService,
+                isGitHubConnected = { container().gitHubAuth.state.value is GitHubAuthState.Connected },
+            )
+        }
+    }
+
     /** The editor needs to know which project it edits, so it gets its own factory. */
     fun editorFactory(projectId: String): ViewModelProvider.Factory = viewModelFactory {
         initializer {
@@ -198,6 +241,7 @@ object AppViewModelProvider {
                 projectId = projectId,
                 projects = container().projectRepository,
                 files = container().sourceFileRepository,
+                recentStore = container().recentFilesStore,
             )
         }
     }

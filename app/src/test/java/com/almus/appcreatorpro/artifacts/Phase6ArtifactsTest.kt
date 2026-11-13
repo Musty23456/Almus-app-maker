@@ -6,11 +6,20 @@ import com.almus.appcreatorpro.domain.build.BuildVariant
 import com.almus.appcreatorpro.domain.model.BuildRecord
 import com.almus.appcreatorpro.domain.model.BuildStatus
 import com.almus.appcreatorpro.service.artifacts.ApkStore
-import com.almus.appcreatorpro.service.artifacts.ArtifactDetails
+import com.almus.appcreatorpro.service.artifacts.ApkPackageReader
+import com.almus.appcreatorpro.service.artifacts.ApkPackageResult
+import com.almus.appcreatorpro.service.artifacts.ArtifactAnalyzer
+import com.almus.appcreatorpro.service.artifacts.ArtifactAssessor
+import com.almus.appcreatorpro.service.artifacts.ArtifactCatalog
+import com.almus.appcreatorpro.service.artifacts.ArtifactOrganizer
+import com.almus.appcreatorpro.service.artifacts.ArtifactRegistry
+import com.almus.appcreatorpro.service.artifacts.ArtifactType
+import com.almus.appcreatorpro.service.artifacts.KnownSigningKeys
+import com.almus.appcreatorpro.service.artifacts.SignerInfo
+import kotlinx.coroutines.Dispatchers
 import com.almus.appcreatorpro.service.artifacts.ArtifactDownloadException.Kind
 import com.almus.appcreatorpro.service.artifacts.ArtifactDownloadException
 import com.almus.appcreatorpro.service.artifacts.ArtifactDownloader
-import com.almus.appcreatorpro.service.artifacts.ArtifactInspector
 import com.almus.appcreatorpro.service.github.TokenProvider
 import com.almus.appcreatorpro.testutil.FakeStreamTransport
 import com.almus.appcreatorpro.testutil.MainDispatcherRule
@@ -133,15 +142,6 @@ class Phase6ArtifactStoreTest {
         store.copyTo(store.list("b1").single(), out)
         assertArrayEquals(bytes, out.toByteArray())
     }
-
-    @Test
-    fun details_for_a_bundle_come_from_the_build_settings() {
-        val d = ArtifactDetails.fromConfiguration(BuildConfiguration(BuildVariant.RELEASE_AAB, applicationId = "com.a.b", versionName = "3", versionCode = 30))
-        assertEquals("com.a.b", d.packageName)
-        assertEquals(30L, d.versionCode)
-        assertFalse(d.fromFile)
-        assertNull(ArtifactDetails.fromConfiguration(null).packageName)
-    }
 }
 
 class Phase6ArtifactsViewModelTest {
@@ -151,15 +151,25 @@ class Phase6ArtifactsViewModelTest {
     @get:Rule
     val mainDispatcherRule = MainDispatcherRule()
 
-    private val inspector = ArtifactInspector { _, isBundle, fallback ->
-        if (isBundle) ArtifactDetails.fromConfiguration(fallback) else ArtifactDetails("com.real.pkg", "1.0", 1L, fromFile = true)
+    private val reader = ApkPackageReader {
+        ApkPackageResult.Parsed("com.real.pkg", "1.0", 1L, false, 24, 35, true, listOf(SignerInfo.fromDer(b64(REL_CERT_B64))!!))
     }
 
+    private fun catalog(store: ApkStore): ArtifactCatalog {
+        val registry = ArtifactRegistry(File(tmp.root, "meta"))
+        return ArtifactCatalog(store, registry, ArtifactAssessor(ArtifactAnalyzer(), reader, registry, KnownSigningKeys.NONE, 34))
+    }
+
+    private fun viewModel(builds: InMemoryBuildStore, store: ApkStore) =
+        ArtifactsViewModel(builds, catalog(store), downloads = null, ioDispatcher = Dispatchers.Unconfined)
+
+    private fun signedApk() = withSigningBlock(plainApk(), b64(REL_CERT_B64))
+
     @Test
-    fun the_manager_lists_saved_files_with_project_build_type_and_details() = runTest {
+    fun the_manager_lists_saved_files_with_project_build_type_and_checked_details() = runTest {
         val store = ApkStore(File(tmp.root, "apks"))
-        File(store.dirFor("b1"), "app.aab").apply { parentFile.mkdirs(); writeBytes(fakeAab()) }
-        File(store.dirFor("b2"), "app.apk").apply { parentFile.mkdirs(); writeBytes(fakeApk()) }
+        File(store.dirFor("b1"), "app.aab").apply { parentFile.mkdirs(); writeBytes(b64(SIGNED_RELEASE_AAB_B64)) }
+        File(store.dirFor("b2"), "app.apk").apply { parentFile.mkdirs(); writeBytes(signedApk()) }
         val builds = InMemoryBuildStore()
         builds.saveBuild(
             BuildRecord(
@@ -167,41 +177,70 @@ class Phase6ArtifactsViewModelTest {
                 configuration = BuildConfiguration(BuildVariant.RELEASE_AAB, applicationId = "com.shop.app", versionCode = 4),
             ),
         )
-        val vm = ArtifactsViewModel(builds, store, inspector)
+        val vm = viewModel(builds, store)
         val items = (vm.state.value as UiState.Success).data
         assertEquals(2, items.size)
-        val aab = items.first { it.file.isBundle }
+        val aab = items.first { it.type == ArtifactType.AAB }
         assertEquals("Shop", aab.projectName)
-        assertEquals("Release AAB", aab.buildLabel)
-        assertEquals("com.shop.app", aab.details.packageName)
-        val apk = items.first { !it.file.isBundle }
+        assertEquals("com.example.shop", aab.report!!.packageName) // the file wins over the build settings
+        assertEquals("Release AAB", aab.report!!.buildVariantLabel)
+        val apk = items.first { it.type == ArtifactType.APK }
         assertEquals("Unknown project", apk.projectName)
-        assertEquals("com.real.pkg", apk.details.packageName)
-        assertTrue(apk.details.fromFile)
+        assertEquals("com.real.pkg", apk.report!!.packageName)
+        assertTrue(apk.report!!.detailsFromFile)
     }
 
     @Test
     fun delete_removes_the_file_and_refreshes_the_list() = runTest {
         val store = ApkStore(File(tmp.root, "apks"))
-        File(store.dirFor("b1"), "app.apk").apply { parentFile.mkdirs(); writeBytes(fakeApk()) }
-        val vm = ArtifactsViewModel(InMemoryBuildStore(), store, inspector)
+        File(store.dirFor("b1"), "app.apk").apply { parentFile.mkdirs(); writeBytes(signedApk()) }
+        val vm = viewModel(InMemoryBuildStore(), store)
         val item = (vm.state.value as UiState.Success).data.single()
         vm.delete(item)
         assertTrue((vm.state.value as UiState.Success).data.isEmpty())
+        assertEquals("Deleted app.apk", vm.message.value)
     }
 
     @Test
     fun saving_to_a_destination_reports_success_and_failure() = runTest {
         val store = ApkStore(File(tmp.root, "apks"))
-        File(store.dirFor("b1"), "app.apk").apply { parentFile.mkdirs(); writeBytes(fakeApk()) }
-        val vm = ArtifactsViewModel(InMemoryBuildStore(), store, inspector)
+        File(store.dirFor("b1"), "app.apk").apply { parentFile.mkdirs(); writeBytes(signedApk()) }
+        val vm = viewModel(InMemoryBuildStore(), store)
         val item = (vm.state.value as UiState.Success).data.single()
         val sink = ByteArrayOutputStream()
         vm.export(item) { sink }
-        assertEquals("Saved app.apk", vm.message.value)
+        assertTrue(vm.message.value!!.startsWith("Saved app.apk"))
         assertTrue(sink.size() > 0)
         vm.clearMessage()
         vm.export(item) { null }
         assertTrue(vm.message.value!!.startsWith("Could not save"))
+    }
+
+    @Test
+    fun a_file_changed_after_saving_cannot_be_exported() = runTest {
+        val store = ApkStore(File(tmp.root, "apks"))
+        val f = File(store.dirFor("b1"), "app.apk").apply { parentFile.mkdirs(); writeBytes(signedApk()) }
+        val vm = viewModel(InMemoryBuildStore(), store)
+        f.appendBytes(byteArrayOf(1))
+        f.setLastModified(f.lastModified() + 5_000)
+        vm.verify((vm.state.value as UiState.Success).data.single())
+        val changed = (vm.state.value as UiState.Success).data.single()
+        val sink = ByteArrayOutputStream()
+        vm.export(changed) { sink }
+        assertEquals(0, sink.size())
+        assertTrue(vm.message.value!!.contains("changed"))
+    }
+
+    @Test
+    fun clean_up_deletes_only_what_the_plan_lists() = runTest {
+        val store = ApkStore(File(tmp.root, "apks"))
+        File(store.dirFor("b1"), "app-release.apk").apply { parentFile.mkdirs(); writeBytes(signedApk()); setLastModified(1_000_000L) }
+        File(store.dirFor("b1"), "app-release2.apk").apply { writeBytes(signedApk()); setLastModified(2_000_000L) }
+        val vm = viewModel(InMemoryBuildStore(), store)
+        val all = (vm.state.value as UiState.Success).data
+        val plan = ArtifactOrganizer.cleanupPlan(all, 1)
+        assertEquals(listOf("app-release.apk"), plan.delete.map { it.fileName })
+        vm.cleanUp(plan)
+        assertEquals(listOf("app-release2.apk"), (vm.state.value as UiState.Success).data.map { it.fileName })
     }
 }

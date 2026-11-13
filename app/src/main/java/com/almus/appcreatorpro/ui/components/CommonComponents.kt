@@ -1,6 +1,8 @@
 package com.almus.appcreatorpro.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,27 +11,36 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.almus.appcreatorpro.domain.model.BuildStatus
-import com.almus.appcreatorpro.ui.theme.SuccessGreen
+import com.almus.appcreatorpro.ui.theme.Spacing
+import com.almus.appcreatorpro.ui.theme.almus
 
 /** Small pill that marks a feature as unfinished so it is never mistaken for a working one. */
 @Composable
@@ -39,9 +50,9 @@ fun PrototypeBadge(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.tertiaryContainer,
-        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        shape = MaterialTheme.shapes.extraSmall,
+        color = MaterialTheme.almus.warningContainer,
+        contentColor = MaterialTheme.almus.onWarningContainer,
     ) {
         Text(
             text = label,
@@ -66,6 +77,7 @@ fun SectionHeader(
     ) {
         Text(
             text = title,
+            modifier = Modifier.semantics { heading() },
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
@@ -75,19 +87,36 @@ fun SectionHeader(
     }
 }
 
+/** Centered spinner with a message. Announced politely to screen readers. For list screens prefer [SkeletonList]. */
 @Composable
 fun LoadingView(
     modifier: Modifier = Modifier,
     message: String = "Loading...",
 ) {
     Column(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .semantics { liveRegion = LiveRegionMode.Polite },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        CircularProgressIndicator()
+        CircularProgressIndicator(strokeWidth = 3.dp)
         Spacer(modifier = Modifier.height(16.dp))
         Text(text = message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** A large soft circle with an icon, shared by the empty and error states. */
+@Composable
+private fun StateIcon(icon: ImageVector, container: Color, tint: Color) {
+    Box(
+        modifier = Modifier
+            .size(72.dp)
+            .clip(CircleShape)
+            .background(container),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(32.dp), tint = tint)
     }
 }
 
@@ -103,19 +132,14 @@ fun EmptyView(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(24.dp),
+            .padding(Spacing.xl),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(48.dp),
-            tint = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
+        StateIcon(icon, MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
+        Spacer(modifier = Modifier.height(Spacing.lg))
         Text(text = title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(Spacing.xs))
         Text(
             text = message,
             style = MaterialTheme.typography.bodyMedium,
@@ -123,12 +147,8 @@ fun EmptyView(
             textAlign = TextAlign.Center,
         )
         if (actionLabel != null && onAction != null) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = onAction) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.size(8.dp))
-                Text(actionLabel)
-            }
+            Spacer(modifier = Modifier.height(Spacing.lg))
+            AlmusButton(text = actionLabel, onClick = onAction, icon = Icons.Filled.Add)
         }
     }
 }
@@ -138,56 +158,85 @@ fun ErrorView(
     message: String,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    title: String = "Something went wrong",
+    retryLabel: String = "Try again",
 ) {
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(24.dp),
+            .padding(Spacing.xl),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(
-            imageVector = Icons.Filled.Warning,
-            contentDescription = null,
-            modifier = Modifier.size(48.dp),
-            tint = MaterialTheme.colorScheme.error,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(text = "Something went wrong", style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        OutlinedButton(onClick = onRetry) { Text("Try again") }
+        Column(
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            StateIcon(Icons.Filled.Warning, MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
+            Spacer(modifier = Modifier.height(Spacing.lg))
+            Text(text = title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+            Spacer(modifier = Modifier.height(Spacing.xs))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+        Spacer(modifier = Modifier.height(Spacing.lg))
+        AlmusButton(text = retryLabel, onClick = onRetry, style = AlmusButtonStyle.Outlined, icon = Icons.Filled.Refresh)
     }
 }
+
+/** A compact error shown inside a screen that still has content (a failed refresh, one failed section). */
+@Composable
+fun ErrorBanner(
+    message: String,
+    modifier: Modifier = Modifier,
+    onRetry: (() -> Unit)? = null,
+) {
+    AlmusCard(
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Assertive },
+        tone = CardTone.Error,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+            Icon(imageVector = Icons.Filled.Warning, contentDescription = null, modifier = Modifier.size(24.dp))
+            Text(text = message, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            if (onRetry != null) AlmusButton(text = "Retry", onClick = onRetry, style = AlmusButtonStyle.Text)
+        }
+    }
+}
+
+/** Colors, icon and words for one build status. The words and icon mean status is never shown by color alone. */
+private data class StatusLook(val container: Color, val content: Color, val icon: ImageVector, val label: String)
 
 @Composable
 fun BuildStatusPill(status: BuildStatus, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
-    val (background, foreground, label) = when (status) {
-        BuildStatus.SUCCESS -> Triple(SuccessGreen, Color.White, "Success")
-        BuildStatus.FAILED -> Triple(scheme.errorContainer, scheme.onErrorContainer, "Failed")
-        BuildStatus.RUNNING -> Triple(scheme.primary, scheme.onPrimary, "Running")
-        BuildStatus.QUEUED -> Triple(scheme.surfaceVariant, scheme.onSurfaceVariant, "Queued")
-        BuildStatus.PREPARING -> Triple(scheme.secondaryContainer, scheme.onSecondaryContainer, "Preparing")
-        BuildStatus.CANCELLED -> Triple(scheme.outline, scheme.surface, "Cancelled")
+    val extras = MaterialTheme.almus
+    val look = when (status) {
+        BuildStatus.SUCCESS -> StatusLook(extras.successContainer, extras.onSuccessContainer, Icons.Filled.CheckCircle, "Success")
+        BuildStatus.FAILED -> StatusLook(scheme.errorContainer, scheme.onErrorContainer, Icons.Filled.Warning, "Failed")
+        BuildStatus.RUNNING -> StatusLook(scheme.primaryContainer, scheme.onPrimaryContainer, Icons.Filled.Refresh, "Running")
+        BuildStatus.QUEUED -> StatusLook(scheme.surfaceContainerHighest, scheme.onSurfaceVariant, Icons.Filled.Info, "Queued")
+        BuildStatus.PREPARING -> StatusLook(scheme.secondaryContainer, scheme.onSecondaryContainer, Icons.Filled.Build, "Preparing")
+        BuildStatus.CANCELLED -> StatusLook(scheme.surfaceContainerHigh, scheme.onSurfaceVariant, Icons.Filled.Close, "Cancelled")
     }
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(50),
-        color = background,
-        contentColor = foreground,
+        shape = CircleShape,
+        color = look.container,
+        contentColor = look.content,
     ) {
-        Text(
-            text = label,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
+        Row(
+            modifier = Modifier.padding(start = 8.dp, end = 10.dp, top = 3.dp, bottom = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(imageVector = look.icon, contentDescription = null, modifier = Modifier.size(14.dp))
+            Text(text = look.label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+        }
     }
 }

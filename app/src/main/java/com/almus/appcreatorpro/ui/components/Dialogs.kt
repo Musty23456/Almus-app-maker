@@ -1,7 +1,11 @@
 package com.almus.appcreatorpro.ui.components
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -12,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 
 /**
  * Single-line text prompt. [validate] returns an error message or null; errors only show once
@@ -34,21 +39,25 @@ fun TextInputDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         title = { Text(title) },
         text = {
             OutlinedTextField(
                 value = value,
                 onValueChange = { value = it },
+                modifier = Modifier.fillMaxWidth(),
                 label = { Text(label) },
                 singleLine = true,
+                shape = MaterialTheme.shapes.medium,
                 isError = error != null,
                 supportingText = { Text(error ?: hint.orEmpty()) },
             )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(value) }, enabled = canConfirm) { Text(confirmLabel) }
+            AlmusButton(text = confirmLabel, onClick = { onConfirm(value) }, enabled = canConfirm)
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { AlmusButton(text = "Cancel", onClick = onDismiss, style = AlmusButtonStyle.Text) },
     )
 }
 
@@ -63,17 +72,21 @@ fun ConfirmDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        icon = if (destructive) {
+            { Icon(Icons.Filled.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) }
+        } else null,
         title = { Text(title) },
         text = { Text(message) },
         confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(
-                    text = confirmLabel,
-                    color = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                )
-            }
+            AlmusButton(
+                text = confirmLabel,
+                onClick = onConfirm,
+                style = if (destructive) AlmusButtonStyle.Danger else AlmusButtonStyle.Primary,
+            )
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { AlmusButton(text = "Cancel", onClick = onDismiss, style = AlmusButtonStyle.Text) },
     )
 }
 
@@ -89,15 +102,17 @@ fun UnsavedChangesDialog(
 ) {
     AlertDialog(
         onDismissRequest = onCancel,
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         title = { Text("Unsaved changes") },
         text = { Text(message) },
         confirmButton = {
             Column(horizontalAlignment = Alignment.End) {
-                TextButton(onClick = onSave) { Text(saveLabel) }
+                AlmusButton(text = saveLabel, onClick = onSave)
                 TextButton(onClick = onDiscard) {
                     Text(discardLabel, color = MaterialTheme.colorScheme.error)
                 }
-                TextButton(onClick = onCancel) { Text("Keep editing") }
+                AlmusButton(text = "Keep editing", onClick = onCancel, style = AlmusButtonStyle.Text)
             }
         },
     )

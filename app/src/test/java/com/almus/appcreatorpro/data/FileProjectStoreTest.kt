@@ -384,4 +384,19 @@ class FileProjectStoreTest {
         assertTrue(leftovers.isEmpty())
         assertNull(s.getProject("zzz"))
     }
+
+    @Test
+    fun git_pointer_file_and_git_folder_beside_files_are_not_listed_as_project_files() = runTest {
+        val s = store()
+        val id = webProject(s)
+        val dir = File(tmp.root, "projects/$id")
+        File(dir, "files/.git").writeText("gitdir: elsewhere")          // what JGit may leave in the work tree
+        File(dir, "git").mkdirs(); File(dir, "git/HEAD").writeText("ref: refs/heads/main\n") // Phase 27 repository data
+        File(dir, "files/.gitignore").writeText("build/\n")
+        val paths = s.listFiles(id).map { it.path }
+        assertTrue(paths.none { it == ".git" || it.startsWith("git/") })
+        assertTrue(paths.contains(".gitignore"))
+        s.deleteProject(id)
+        assertTrue("deleting a project also deletes its Git data", !dir.exists())
+    }
 }

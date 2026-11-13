@@ -125,6 +125,10 @@ class BackendClientTest {
         kind().let { assertEquals(AiErrorKind.RATE_LIMITED, it.kind); assertEquals(30, it.retryAfterSeconds) }
         err(502, "<html><body>Bad gateway SECRET-PAGE</body></html>")
         kind().let { assertEquals(AiErrorKind.UNAVAILABLE, it.kind); assertFalse(it.message!!.contains("SECRET-PAGE")) }
+        err(504, "<html>gateway timeout</html>")
+        kind().let { assertEquals(AiErrorKind.TIMEOUT, it.kind); assertTrue(it.retryable) }
+        err(408, "")
+        kind().let { assertEquals(AiErrorKind.TIMEOUT, it.kind); assertTrue(it.retryable) }
         err(200, "<html>not json</html>")
         assertEquals(AiErrorKind.BAD_RESPONSE, kind().kind)
     }

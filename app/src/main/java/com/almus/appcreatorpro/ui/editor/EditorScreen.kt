@@ -47,7 +47,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.almus.appcreatorpro.domain.validation.FilePathValidator
 import com.almus.appcreatorpro.domain.validation.ProjectNameValidator
-import com.almus.appcreatorpro.editor.FileTree
+import com.almus.appcreatorpro.explorer.ExplorerTree
+import com.almus.appcreatorpro.explorer.PathOps
 import com.almus.appcreatorpro.ui.AppViewModelProvider
 import com.almus.appcreatorpro.ui.components.ConfirmDialog
 import com.almus.appcreatorpro.ui.components.EmptyView
@@ -55,13 +56,15 @@ import com.almus.appcreatorpro.ui.components.ErrorView
 import com.almus.appcreatorpro.ui.components.LoadingView
 import com.almus.appcreatorpro.ui.components.TextInputDialog
 import com.almus.appcreatorpro.ui.components.UnsavedChangesDialog
-import com.almus.appcreatorpro.ui.theme.SuccessGreen
+import com.almus.appcreatorpro.ui.theme.almus
+import com.almus.appcreatorpro.util.Formatters
 import kotlinx.coroutines.launch
 
 private sealed interface EditorDialog {
     data class NewFile(val prefix: String) : EditorDialog
     data class RenameFile(val path: String) : EditorDialog
-    data class DeleteFile(val path: String) : EditorDialog
+    data class NewFolder(val prefix: String) : EditorDialog
+    data class RenameFolder(val path: String) : EditorDialog
     data object RenameProject : EditorDialog
     data class CloseTab(val path: String) : EditorDialog
     data object Leave : EditorDialog
@@ -79,6 +82,7 @@ fun EditorScreen(
     onOpenDebug: () -> Unit = {},
     onOpenAi: () -> Unit = {},
     onOpenPreview: () -> Unit = {},
+    onOpenGit: () -> Unit = {},
 ) {
     val viewModel: EditorViewModel = viewModel(
         key = "editor-$projectId",
@@ -127,7 +131,9 @@ fun EditorScreen(
         }
     }
 
-    val rows = remember(state.files, state.collapsedFolders) { FileTree.rows(state.files, state.collapsedFolders) }
+    val rows = remember(state.files, state.collapsedFolders, state.searchQuery, state.sort) {
+        ExplorerTree.rows(state.files, state.collapsedFolders, state.searchQuery, state.sort)
+    }
     val dirtyPaths = remember(state.openFiles) { state.openFiles.filter { it.isDirty }.map { it.path }.toSet() }
     val active = state.activeFile
 
@@ -136,20 +142,33 @@ fun EditorScreen(
         gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             ModalDrawerSheet {
-                FileExplorer(
+                ProjectExplorer(
                     projectName = state.project?.name.orEmpty(),
+                    files = state.files,
                     rows = rows,
+                    recentFiles = state.recentFiles,
                     activePath = state.activePath,
                     dirtyPaths = dirtyPaths,
+                    searchQuery = state.searchQuery,
+                    sort = state.sort,
+                    onSearchChange = viewModel::setSearchQuery,
+                    onSortChange = viewModel::setSort,
                     onOpenFile = { path ->
                         viewModel.openFile(path)
                         scope.launch { drawerState.close() }
                     },
+                    onPreviewFile = viewModel::previewFile,
                     onToggleFolder = viewModel::toggleFolder,
                     onNewFile = { prefix -> dialog = EditorDialog.NewFile(prefix) },
+                    onNewFolder = { prefix -> dialog = EditorDialog.NewFolder(prefix) },
                     onRenameFile = { path -> dialog = EditorDialog.RenameFile(path) },
-                    onDeleteFile = { path -> dialog = EditorDialog.DeleteFile(path) },
+                    onRenameFolder = { path -> dialog = EditorDialog.RenameFolder(path) },
+                    onDuplicateFile = viewModel::duplicateFile,
+                    onDeleteFile = { path -> viewModel.requestDelete(path, isFolder = false) },
+                    onDeleteFolder = { path -> viewModel.requestDelete(path, isFolder = true) },
                     onRenameProject = { dialog = EditorDialog.RenameProject },
+                    onClearRecent = viewModel::clearRecent,
+                    onCopyText = { text -> clipboard.setText(AnnotatedString(text)) },
                 )
             }
         },
@@ -216,6 +235,14 @@ fun EditorScreen(
                                         menuOpen = false
                                         // Save first so the preview shows what is on screen.
                                         viewModel.saveAll { ok -> if (ok) onOpenPreview() }
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Git") },
+                                    onClick = {
+                                        menuOpen = false
+                                        // Save first: Git only sees what is on disk, not unsaved text.
+                                        viewModel.saveAll { ok -> if (ok) onOpenGit() }
                                     },
                                 )
                                 DropdownMenuItem(
@@ -373,21 +400,36 @@ fun EditorScreen(
             },
             onDismiss = { dialog = null },
         )
-        is EditorDialog.DeleteFile -> {
-            val modified = current.path in dirtyPaths
-            ConfirmDialog(
-                title = "Delete file?",
-                message = "\"${current.path}\" will be permanently deleted." +
-                    if (modified) " Its unsaved changes will be lost too." else "",
-                confirmLabel = "Delete",
-                destructive = true,
-                onConfirm = {
-                    dialog = null
-                    viewModel.deleteFile(current.path)
-                },
-                onDismiss = { dialog = null },
-            )
-        }
+        is EditorDialog.NewFolder -> TextInputDialog(
+            title = "New folder",
+            label = "Folder path",
+            initialValue = current.prefix,
+            confirmLabel = "Create",
+            hint = "Use / for nested folders, e.g. src/utils",
+            validate = { input -> PathOps.validateFolder(PathOps.normalizeInput(input)) },
+            onConfirm = { path ->
+                dialog = null
+                viewModel.createFolder(path)
+            },
+            onDismiss = { dialog = null },
+        )
+        is EditorDialog.RenameFolder -> TextInputDialog(
+            title = "Rename or move folder",
+            label = "New folder path",
+            initialValue = current.path,
+            confirmLabel = "Rename",
+            hint = "Every file inside moves with it.",
+            validate = { input ->
+                val clean = PathOps.normalizeInput(input).trimEnd('/')
+                PathOps.validateFolder(clean)
+                    ?: if (clean == current.path) "Enter a different name." else null
+            },
+            onConfirm = { newPath ->
+                dialog = null
+                viewModel.renameFolder(current.path, newPath)
+            },
+            onDismiss = { dialog = null },
+        )
         EditorDialog.RenameProject -> TextInputDialog(
             title = "Rename project",
             label = "Project name",
@@ -429,6 +471,57 @@ fun EditorScreen(
             onCancel = { dialog = null },
         )
     }
+
+    // ------------------------------------------------------------------ Phase 25: delete, protected rename, preview
+
+    state.pendingDelete?.let { plan ->
+        val what = if (plan.isFolder) "the folder \"${plan.path}/\" and its ${plan.files.size} file(s)" else "\"${plan.path}\""
+        val unsaved = if (plan.unsaved.isEmpty()) "" else " Unsaved changes in ${plan.unsaved.size} open file(s) will be lost too."
+        if (plan.needsTypedConfirmation) {
+            TextInputDialog(
+                title = "Delete important file?",
+                label = "Type \"${plan.confirmationWord}\" to confirm",
+                initialValue = "",
+                confirmLabel = "Delete",
+                hint = "Contains: ${plan.protectedFiles.joinToString(limit = 3)}. This cannot be undone.$unsaved",
+                validate = { input -> if (input.trim() == plan.confirmationWord) null else "The name does not match yet." },
+                onConfirm = { typed -> viewModel.confirmDelete(typed) },
+                onDismiss = viewModel::cancelDelete,
+            )
+        } else {
+            ConfirmDialog(
+                title = if (plan.isFolder) "Delete folder?" else "Delete file?",
+                message = "$what (${Formatters.formatBytes(plan.totalBytes)}) will be permanently deleted.$unsaved",
+                confirmLabel = "Delete",
+                destructive = true,
+                onConfirm = { viewModel.confirmDelete(null) },
+                onDismiss = viewModel::cancelDelete,
+            )
+        }
+    }
+
+    state.pendingProtectedRename?.let { pending ->
+        ConfirmDialog(
+            title = "Rename important file?",
+            message = pending.message,
+            confirmLabel = "Rename anyway",
+            destructive = true,
+            onConfirm = viewModel::confirmProtectedRename,
+            onDismiss = viewModel::cancelProtectedRename,
+        )
+    }
+
+    state.preview?.let { preview ->
+        FilePreviewSheet(
+            preview = preview,
+            onEdit = { path ->
+                viewModel.closePreview()
+                viewModel.openFile(path)
+                scope.launch { drawerState.close() }
+            },
+            onDismiss = viewModel::closePreview,
+        )
+    }
 }
 
 @Composable
@@ -437,7 +530,7 @@ private fun SaveStatus(hasUnsaved: Boolean, isSaving: Boolean, visible: Boolean)
     val (text, color) = when {
         isSaving -> "Saving..." to MaterialTheme.colorScheme.onSurfaceVariant
         hasUnsaved -> "Unsaved changes" to MaterialTheme.colorScheme.tertiary
-        else -> "All changes saved" to SuccessGreen
+        else -> "All changes saved" to MaterialTheme.almus.success
     }
     Text(text = text, style = MaterialTheme.typography.labelSmall, color = color)
 }

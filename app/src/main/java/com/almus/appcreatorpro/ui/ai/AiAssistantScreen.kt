@@ -1,5 +1,6 @@
 package com.almus.appcreatorpro.ui.ai
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -50,6 +52,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.almus.appcreatorpro.ai.AiProjectSession
 import com.almus.appcreatorpro.ai.AiRole
 import com.almus.appcreatorpro.ai.ChangeStatus
+import com.almus.appcreatorpro.ai.ChatLanguage
+import com.almus.appcreatorpro.ai.CodeReview
+import com.almus.appcreatorpro.ai.FollowUpResolver
+import com.almus.appcreatorpro.ai.ReviewVerdict
+import com.almus.appcreatorpro.ai.SuggestionEngine
 import com.almus.appcreatorpro.ai.ChatMarkdown
 import com.almus.appcreatorpro.ai.ChatMode
 import com.almus.appcreatorpro.ai.ChatTurn
@@ -132,11 +139,24 @@ private fun ChatTab(session: AiProjectSession, vm: AiAssistantViewModel, paths: 
     val clipboard = LocalClipboardManager.current
     val listState = rememberLazyListState()
     var input by rememberSaveable { mutableStateOf("") }
-    var mode by rememberSaveable { mutableStateOf(ChatMode.ASK) }
+    var mode by rememberSaveable { mutableStateOf(ChatMode.AUTO) }
+    var uiLanguage by rememberSaveable { mutableStateOf(ChatLanguage.ENGLISH) }
     var attached by remember { mutableStateOf(listOf<String>()) }
+    val profile by vm.profile.collectAsStateWithLifecycle()
+    val review by vm.codeReview.collectAsStateWithLifecycle()
     var picking by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     val turns = state.turns
+    val smart = mode == ChatMode.AUTO
+    // Phase 24: what Smart mode understood, which files a follow-up would carry over, and which files might matter.
+    val guess = remember(input, attached, turns, smart) { if (smart && input.isNotBlank()) session.chat.previewIntent(input, attached.size) else null }
+    val carry = remember(input, attached, turns, paths, guess) {
+        if (guess == null) null else FollowUpResolver.carryOver(input, turns, attached, paths.toSet(), guess.intent)
+    }
+    val fileHints = remember(input, attached, paths, smart) { if (smart && input.trim().length >= 4) SuggestionEngine.suggestFiles(input, paths, attached) else emptyList() }
+    val suggestions = remember(uiLanguage, profile, turns, attached, state.busy) {
+        if (state.busy) emptyList() else SuggestionEngine.suggest(uiLanguage, profile, turns, attached)
+    }
 
     LaunchedEffect(turns.size, turns.lastOrNull()?.text?.length) {
         if (turns.isNotEmpty()) listState.scrollToItem(turns.lastIndex)
@@ -147,8 +167,13 @@ private fun ChatTab(session: AiProjectSession, vm: AiAssistantViewModel, paths: 
             if (turns.isEmpty()) {
                 item {
                     Text(
-                        "Ask about your app, generate code, explain a file or fix an error. Attach files so the AI can see them - " +
-                            "you always see which files are sent.",
+                        if (uiLanguage == ChatLanguage.HAUSA) {
+                            "Gaya wa AI abin da kake so, da Hausa ko English: ƙirƙiri code, bayyana file, nemo bugs, inganta ko sake tsara code. " +
+                                "Ka haɗa files domin AI ya gan su - kullum za ka ga files ɗin da ake aika wa."
+                        } else {
+                            "Say what you need in plain English or Hausa: create a screen, explain a file, find bugs, optimize or refactor. " +
+                                "Attach files so the AI can see them - you always see which files are sent."
+                        },
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -160,15 +185,41 @@ private fun ChatTab(session: AiProjectSession, vm: AiAssistantViewModel, paths: 
                     busy = state.busy,
                     onCopy = { clipboard.setText(AnnotatedString(it)) },
                     onRegenerate = { session.chat.regenerate() },
-                    onApply = { vm.changeFromChat(t.id) },
+                    onApply = { vm.reviewChat(t.id) },
                 )
             }
         }
         state.notice?.let { Text(it, Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
 
         Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ChatMode.entries.forEach { m -> FilterChip(selected = mode == m, onClick = { mode = m }, label = { Text(m.label) }) }
+            }
+            if (suggestions.isNotEmpty()) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    TextButton(onClick = { uiLanguage = if (uiLanguage == ChatLanguage.ENGLISH) ChatLanguage.HAUSA else ChatLanguage.ENGLISH }) { Text(uiLanguage.label) }
+                    suggestions.forEach { sg -> FilterChip(selected = false, onClick = { input = sg.prompt }, label = { Text(sg.label) }) }
+                }
+            }
+            if (fileHints.isNotEmpty()) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text("Attach?", style = MaterialTheme.typography.labelSmall)
+                    fileHints.forEach { f -> FilterChip(selected = false, onClick = { attached = attached + f }, label = { Text(f.substringAfterLast('/')) }) }
+                }
+            }
+            if (guess != null) {
+                Text(
+                    "Understood as: ${guess.intent.labelFor(guess.language)}" + if (guess.language == ChatLanguage.HAUSA) " (Hausa)" else "",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary,
+                )
+                if (carry != null && carry.isFollowUp) {
+                    Text(
+                        "Follow-up: the current text of ${carry.inherited.joinToString { it.substringAfterLast('/') }} from your last exchange is sent again.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (guess.intent.needsExistingCode && attached.isEmpty()) {
+                    Text("This is about existing code: attach the file so the AI can see it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { picking = true }) { Text(if (attached.isEmpty()) "Attach files" else "Files (${attached.size})") }
@@ -195,6 +246,7 @@ private fun ChatTab(session: AiProjectSession, vm: AiAssistantViewModel, paths: 
         }
     }
 
+    review?.let { r -> CodeReviewDialog(r, onDismiss = { vm.dismissReview() }, onConfirm = { vm.confirmReview(it) }) }
     if (picking) FilePickerDialog(paths, attached, onDismiss = { picking = false }, onDone = { attached = it; picking = false })
     if (confirmClear) ConfirmDialog(
         title = "Clear conversation?", message = "The chat history of this project is deleted from this phone. Applied changes are not affected.",
@@ -212,8 +264,17 @@ private fun TurnView(turn: ChatTurn, isLast: Boolean, busy: Boolean, onCopy: (St
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (mine) {
                 SelectionContainer { Text(turn.text) }
-                if (turn.contextPaths.isNotEmpty()) Text("Files: ${turn.contextPaths.joinToString { it.substringAfterLast('/') }}", style = MaterialTheme.typography.labelSmall)
+                if (turn.contextPaths.isNotEmpty()) {
+                    Text(
+                        (if (turn.inheritedContext) "Files (carried over from the last exchange): " else "Files: ") + turn.contextPaths.joinToString { it.substringAfterLast('/') },
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             } else {
+                val understood = turn.intent
+                if (understood != null) {
+                    Text("Understood as: ${understood.labelFor(turn.language ?: ChatLanguage.ENGLISH)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
                 if (turn.text.isEmpty() && turn.state == TurnState.STREAMING) Text("Thinking...", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 ChatMarkdown.split(turn.text).forEach { block ->
                     when (block) {
@@ -232,7 +293,7 @@ private fun TurnView(turn: ChatTurn, isLast: Boolean, busy: Boolean, onCopy: (St
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (turn.text.isNotBlank()) TextButton(onClick = { onCopy(turn.text) }) { Text("Copy") }
                         if (isLast && !busy) TextButton(onClick = onRegenerate) { Text(if (turn.state == TurnState.ERROR) "Retry" else "Regenerate") }
-                        if (turn.state == TurnState.DONE && turn.text.contains("```")) TextButton(onClick = onApply) { Text("Apply to file") }
+                        if (turn.state == TurnState.DONE && turn.text.contains("```")) TextButton(onClick = onApply) { Text("Review & apply") }
                     }
                 }
             }
@@ -266,6 +327,46 @@ fun FilePickerDialog(paths: List<String>, selected: List<String>, onDismiss: () 
             }
         },
         confirmButton = { TextButton(onClick = { onDone(paths.filter { it in chosen.value }) }) { Text("Done") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/**
+ * Phase 24: preview and approve generated code. Every file is listed with new/changed, the size of the change, the result of the
+ * simple checks and a before/after view. Nothing is written here: accepted files go to the Changes tab, where Apply is a second step.
+ */
+@Composable
+private fun CodeReviewDialog(review: CodeReview, onDismiss: () -> Unit, onConfirm: (Set<String>) -> Unit) {
+    val selected = remember(review.turnId) { mutableStateOf(review.acceptablePaths.toSet()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Review generated code") },
+        text = {
+            LazyColumn(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                item {
+                    Text(
+                        "Nothing is written yet. Choose the files you accept. They are added to Changes, where you press Apply.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                items(review.files, key = { it.path }) { f ->
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        ChangeFileRow(
+                            f.change, checked = f.path in selected.value, enabled = f.canAccept,
+                            onToggle = { on -> selected.value = if (on) selected.value + f.path else selected.value - f.path },
+                        )
+                        Text(
+                            f.verdict.label, style = MaterialTheme.typography.labelSmall,
+                            color = if (f.verdict == ReviewVerdict.BLOCKED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        f.problems.forEach { Text("- $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+                items(review.rejected) { r -> Text("Not used: ${r.path} - ${r.reason}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                items(review.warnings) { w -> Text(w, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(selected.value) }, enabled = selected.value.isNotEmpty()) { Text("Add to Changes") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
