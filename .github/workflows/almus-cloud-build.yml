@@ -313,12 +313,12 @@ jobs:
             out="$RUNNER_TEMP/out/$base"
             case "$f" in
               *.apk)
-                "$APKSIGNER" sign --ks "$KS" --ks-pass env:STORE_PASS --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASS --out "$out" "$f" || fail "Signing failed at step Sign. Check the alias and the passwords stored as secrets."
+                "$APKSIGNER" sign --ks "$KS" --ks-pass env:STORE_PASS --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASS --out "$out" "$f" || fail "Signing failed at step Sign. Check the alias and the passwords stored as GitHub secrets (see the signing screen)"
                 CERTS="$("$APKSIGNER" verify --print-certs "$out")"
                 KIND=apk
                 ;;
               *.aab)
-                jarsigner -keystore "$KS" -storetype PKCS12 -storepass:env STORE_PASS -keypass:env KEY_PASS -signedjar "$out" "$f" "$KEY_ALIAS" > /dev/null || fail "Signing failed at step Sign. Check the alias and the passwords stored as secrets."
+                jarsigner -keystore "$KS" -storetype PKCS12 -storepass:env STORE_PASS -keypass:env KEY_PASS -signedjar "$out" "$f" "$KEY_ALIAS" > /dev/null || fail "Signing failed at step Sign. Check the alias and the passwords stored as GitHub secrets (see the signing screen)"
                 CERTS="$(jarsigner -verify -certs "$out")"
                 KIND=aab
                 ;;
