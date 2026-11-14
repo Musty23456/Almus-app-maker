@@ -1,0 +1,69 @@
+# One-time helper: creates the signing key for Almus App Creator Pro.
+#
+# Run it ONCE (Actions tab > "Create Signing Key" > Run workflow), after adding the repository secret
+# ALMUS_KEYSTORE_PASSWORD. It produces a downloadable file with the key encoded as text. You paste that text into a
+# second secret, ALMUS_KEYSTORE_BASE64. Full steps for a phone are in README.md, section "Signing the app".
+#
+# Safety: the key is protected by your password, the artifact is deleted after 1 day, and the workflow refuses to run
+# if a key already exists (a second, different key would stop updates of the installed app).
+
+name: Create Signing Key
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  create:
+    name: Create keystore
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check setup
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ALMUS_KEYSTORE_PASSWORD }}
+          EXISTING_KEY: ${{ secrets.ALMUS_KEYSTORE_BASE64 }}
+          IS_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [ -n "$KEYSTORE_PASSWORD" ] || fail "First add the repository secret ALMUS_KEYSTORE_PASSWORD (a long password you choose). See README, 'Signing the app'."
+          [ -z "$EXISTING_KEY" ] || fail "ALMUS_KEYSTORE_BASE64 already exists. A new key would be different from the one your installed app uses, so no new key was made."
+          [ "${#KEYSTORE_PASSWORD}" -ge 16 ] || fail "ALMUS_KEYSTORE_PASSWORD is too short. Use at least 16 characters."
+          if [ "$IS_PRIVATE" != "true" ] && [ "${#KEYSTORE_PASSWORD}" -lt 24 ]; then
+            fail "This repository is public, so the downloadable key file could be seen by others. Use a password of at least 24 characters, or make the repository private first."
+          fi
+
+      - name: Create keystore
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ALMUS_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/out"
+          keytool -genkeypair -storetype PKCS12 \
+            -keystore "$RUNNER_TEMP/almus.jks" -alias almus \
+            -keyalg RSA -keysize 4096 -validity 36500 \
+            -storepass:env KEYSTORE_PASSWORD -keypass:env KEYSTORE_PASSWORD \
+            -dname "CN=Almus App Creator Pro, O=Almus, C=NG"
+          base64 -w0 "$RUNNER_TEMP/almus.jks" > "$RUNNER_TEMP/out/ALMUS_KEYSTORE_BASE64.txt"
+          keytool -list -keystore "$RUNNER_TEMP/almus.jks" -storepass:env KEYSTORE_PASSWORD | grep -i "SHA-256" > "$RUNNER_TEMP/out/fingerprint.txt"
+          rm -f "$RUNNER_TEMP/almus.jks"
+          {
+            echo "### Key created"
+            echo "1. Download the artifact **almus-signing-key** below (it is a zip; unzip it in your Files app)."
+            echo "2. Open **ALMUS_KEYSTORE_BASE64.txt**, select ALL the text and copy it."
+            echo "3. Repository Settings > Secrets and variables > Actions > New repository secret. Name: **ALMUS_KEYSTORE_BASE64**, paste the text."
+            echo "4. Run the **Android Build** workflow. Its summary will show the certificate fingerprint."
+            echo "5. Keep your password and the file somewhere safe: if you lose both, installed copies of the app cannot be updated."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload key as a one-day download
+        uses: actions/upload-artifact@v4
+        with:
+          name: almus-signing-key
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+          retention-days: 1

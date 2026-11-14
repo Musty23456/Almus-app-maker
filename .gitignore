@@ -1,0 +1,9 @@
+# Build output. The leading slash matters: only the top-level folders are ignored, so source packages that are
+# named "build" (app/src/main/java/.../domain/build and .../service/build) are never ignored.
+/build/
+/app/build/
+.gradle/
+.idea/
+local.properties
+*.keystore
+*.jks
