@@ -47,6 +47,21 @@ class BuildTracker(
         }
     }
 
+    /** Called when the app starts: follows again every build that was still running when the app was closed. */
+    fun resumeUnfinished() {
+        scope.launch {
+            try {
+                builds.getBuildHistory()
+                    .filter { !it.isSample && !it.status.isTerminal && !it.pollingStopped }
+                    .forEach { track(it.id) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The background monitor and the refresh button look at these builds again.
+            }
+        }
+    }
+
     /** Uploads, starts and then follows the build. A second start of the same project while one is starting is refused. */
     suspend fun startBuild(project: Project, config: CloudBuildConfig, buildConfig: BuildConfiguration = BuildConfiguration.DEFAULT): StartResult {
         synchronized(lock) {

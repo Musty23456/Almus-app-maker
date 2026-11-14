@@ -467,7 +467,7 @@ class JGitEngine : GitEngine {
         return HostPinnedCredentialsProvider(host, credentials)
     }
 
-    private fun monitor(ctx: GitContext): ProgressMonitor = object : NullProgressMonitor() {
+    private fun monitor(ctx: GitContext): ProgressMonitor = object : ProgressMonitor by NullProgressMonitor.INSTANCE {
         private var task = ""
         private var total = 0
         private var done = 0

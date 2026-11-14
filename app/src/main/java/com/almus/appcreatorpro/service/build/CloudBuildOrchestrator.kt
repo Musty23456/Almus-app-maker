@@ -104,9 +104,7 @@ class CloudBuildOrchestrator(
         return Analysis(result, projectFiles, workflowVersion)
     }
 
-    private fun needsCurrentWorkflow(c: BuildConfiguration): Boolean =
-        c.variant != BuildVariant.DEBUG_APK || c.applicationId != null || c.versionName != null || c.versionCode != null ||
-            c.minSdk != null || c.targetSdk != null || c.options.minify != null || c.options.shrinkResources != null
+    private fun needsCurrentWorkflow(c: BuildConfiguration): Boolean = c.variant != BuildVariant.DEBUG_APK || c.hasOverrides
 
     private suspend fun readProjectFiles(project: Project): Pair<Map<String, String>, List<String>> {
         val problems = ArrayList<String>()

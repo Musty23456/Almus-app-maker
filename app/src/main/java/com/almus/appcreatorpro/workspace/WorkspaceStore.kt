@@ -82,7 +82,8 @@ class WorkspaceStore(
             ),
         )
 
-        fun decode(text: String): RepoWorkspace? = try {
+        fun decode(text: String): RepoWorkspace? {
+            return try {
             val o = MiniJson.parse(text).asObj()
             if (o == null) null else RepoWorkspace(
                 id = o.str("id") ?: return null,
@@ -102,6 +103,7 @@ class WorkspaceStore(
             )
         } catch (e: MiniJson.JsonException) {
             null
+        }
         }
     }
 }

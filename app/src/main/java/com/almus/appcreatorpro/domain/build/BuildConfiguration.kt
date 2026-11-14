@@ -77,6 +77,11 @@ data class BuildConfiguration(
             BuildVariant.CUSTOM -> customRelease && customSign
         }
 
+    /** True when the user set an own application ID, version, SDK level or option. */
+    val hasOverrides: Boolean
+        get() = applicationId != null || versionName != null || versionCode != null || minSdk != null ||
+            targetSdk != null || options.minify != null || options.shrinkResources != null
+
     /** Short name for lists and notifications, e.g. "Release AAB". */
     fun shortLabel(): String = when (variant) {
         BuildVariant.CUSTOM ->
